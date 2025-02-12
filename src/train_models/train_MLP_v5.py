@@ -32,6 +32,7 @@ def train_and_evaluate(
     train_data,
     dev_data,
     test_data,
+    pseudo_dict,
     target_prompt_id,
     weights,
     batch_size,
@@ -48,6 +49,7 @@ def train_and_evaluate(
     mlp_data = {}
     mlp_data['y_source'] = train_data['scaled_score']
     mlp_data['y_dev'] = dev_data['scaled_score']
+    mlp_data['y_pseudo'] = np.array([pseudo_dict[eid] for eid in test_data['essay_id']])
     mlp_data['y_test'] = test_data['scaled_score']
     if args.pred_model == 'mlp':
         pred_model = MLP(input_feature=train_data['embedding'].shape[1]).to(device)
@@ -73,12 +75,16 @@ def train_and_evaluate(
     )
 
     # For dev
-    y_pred_dev = pred_func(
-        pred_model,
-        mlp_data['x_dev'],
-        batch_size=batch_size,
-        device=device
-    )
+    if len(mlp_data['x_dev']) != 0:
+        y_pred_dev = pred_func(
+            pred_model,
+            mlp_data['x_dev'],
+            batch_size=batch_size,
+            device=device
+        )
+        dev_loss = mean_squared_error(mlp_data['y_dev'], y_pred_dev)
+    else:
+        dev_loss = 0
     # For test
     y_pred_test = pred_func(
         pred_model,
@@ -86,9 +92,12 @@ def train_and_evaluate(
         batch_size=batch_size,
         device=device
     )
+    pseudo_loss = mean_squared_error(mlp_data['y_pseudo'], y_pred_test)
+    
+    model_selection_loss = (1 - args.loss_lambda) * dev_loss + args.loss_lambda * pseudo_loss
+    
     test_qwk = calc_qwk(mlp_data['y_test'], y_pred_test, target_prompt_id, attribute_name)
-    dev_mse = mean_squared_error(mlp_data['y_dev'], y_pred_dev)
-    return test_qwk, dev_mse
+    return test_qwk, model_selection_loss
 
 def main(args):
     ###################################################
@@ -101,13 +110,14 @@ def main(args):
     if args.wandb:
         wandb.init(
             project=args.pjname,
-            name=args.run_name + f'_{args.pred_model}_{target_prompt_id}_seed{args.seed}_lambda{args.loss_lambda}',
+            name=args.run_name + f'_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}',
             config=dict(args._get_kwargs())
         )
 
     ###################################################
     # Step1. Load Data
     ###################################################
+    # Load essay data
     print('Loading essay data...')
     dataset = EssayDataset('data/training_set_rel3.xlsx', 'data/hand_crafted_v3.csv', 'data/readability_features.csv')
     dataset.preprocess_dataframe()
@@ -117,11 +127,18 @@ def main(args):
         cache_dir='src/.embedding_cache',
         embedding_model=args.embedding_model,
         add_pos=False,
+        device=device
     )
-    estimated_data_value = np.load(f'outputs/dvrl_v5/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}.npy')
     print(f'    Number of training samples: {len(train_data["essay_id"])}')
     print(f'    Number of dev samples: {len(dev_data["essay_id"])}')
     print(f'    Number of test samples: {len(test_data["essay_id"])}')
+    print(f'    Selected Dev data: {dev_data["essay_id"]}')
+    print(f'    The score of selected Dev data: {dev_data["original_score"]}')
+
+    # load pseudo label
+    df = pl.read_csv('data/pseudo_label.csv').to_dict()
+    pseudo_dict = dict(zip(df['essay_id'].to_numpy(), df['y_pred'].to_numpy()))
+    estimated_data_value = np.load(f'outputs/{args.pjname}/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}.npy')
     
     for p_val in np.arange(0.0, 1.0, 0.1):
         ##################################################
@@ -137,6 +154,7 @@ def main(args):
             train_data,
             dev_data,
             test_data,
+            pseudo_dict,
             target_prompt_id,
             weights,
             args.batch_size,
@@ -159,6 +177,7 @@ def main(args):
             train_data,
             dev_data,
             test_data,
+            pseudo_dict,
             target_prompt_id,
             weights,
             args.batch_size,

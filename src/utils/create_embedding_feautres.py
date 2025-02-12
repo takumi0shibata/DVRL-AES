@@ -258,4 +258,4 @@ def create_data_loader(data: list, tokenizer: AutoTokenizer, max_length: int, ba
         max_length=max_length,
         weights = weights
     )
-    return DataLoader(ds, batch_size=batch_size, num_workers=4)
+    return DataLoader(ds, batch_size=batch_size, num_workers=0)
