@@ -22,14 +22,28 @@ do
   for lambda in "${lambda_list[@]}"
   do
     echo "Running with pred_model: ${pred_model}, lambda: ${lambda}"
-
-    python src/train_models/train_MLP_v5.py \
-        --wandb \
-        --pjname "DVRL-V5-journal" \
-        --target_prompt_id "${prompt}" \
-        --seed 12 \
-        --device "${device}" \
-        --pred_model "${pred_model}" \
-        --loss_lambda "${lambda}" 
+    
+    if [ "${lambda}" = "1.0" ]; then
+        python src/train_models/train_MLP_v5.py \
+            --wandb \
+            --pjname "DVRL-V5-20250206" \
+            --target_prompt_id "${prompt}" \
+            --seed 12 \
+            --device "${device}" \
+            --pred_model "${pred_model}" \
+            --loss_lambda "${lambda}" \
+            --dev_size 0 \
+            --ot
+    else
+        python src/train_models/train_MLP_v5.py \
+            --wandb \
+            --pjname "DVRL-V5-20250206" \
+            --target_prompt_id "${prompt}" \
+            --seed 12 \
+            --device "${device}" \
+            --pred_model "${pred_model}" \
+            --loss_lambda "${lambda}" \
+            --ot
+    fi
   done
 done

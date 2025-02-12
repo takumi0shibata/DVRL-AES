@@ -303,7 +303,6 @@ class Dvrl:
                         'DVRL Loss': loss.item(),
                         'Prob MAX': est_dv_curr.max().item(),
                         'Prob MIN': est_dv_curr.min().item(),
-                        metric.upper(): dvrl_perf,
                         'Pseudo QWK': pseudo_reward,
                     }
                 )

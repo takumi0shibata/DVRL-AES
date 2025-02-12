@@ -115,7 +115,7 @@ def main(args):
     # data_value = dvrl_class.dvrl_valuator(dvrl_data['x_source'], dvrl_data['y_source'])
 
     print('Saving DVRL...')
-    output_dir = './outputs/dvrl_v5'
+    output_dir = f'./outputs/{args.pjname}'
     os.makedirs(output_dir, exist_ok=True)
     np.save(output_dir + f'/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}.npy', data_value)
 
