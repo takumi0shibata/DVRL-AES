@@ -115,7 +115,7 @@ def train_and_evaluate(
             best_dev_qwk = model_selection_qwk
             best_test_qwk = test_history['qwk']
 
-    return best_loss, best_test_qwk
+    return best_test_qwk, best_loss
 
 
 
@@ -130,7 +130,7 @@ def main(args):
     if args.wandb:
         wandb.init(
             project=args.pjname,
-            name=args.run_name + f'_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}',
+            name=args.run_name + f'_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}',
             config=dict(args._get_kwargs())
         )
 
