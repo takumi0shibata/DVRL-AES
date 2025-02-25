@@ -250,7 +250,7 @@ def TestSingleOverallScoring(args, essay_encoder, scorer, loader, mode, attribut
             fea_cat = torch.cat([essay_fea, linguistic.to(args.device), readability.to(args.device)], dim=1)
             aes_pre = scorer(fea_cat)
             aes_pre = aes_pre.to('cpu')
-            aes_loss = nn.MSELoss()(aes_pre, score)
+            aes_loss = nn.MSELoss()(aes_pre.squeeze(), score.squeeze())
 
             total_loss += aes_loss
             score, aes_pre = TransferScoreForSingleTrait(score, aes_pre, prompt, mode, attribute_name)
@@ -277,7 +277,7 @@ def TestSingleOverallScoringForMultiTarget(args, essay_encoder, Smodel, loader, 
                 fea_cat = torch.cat([essay_fea, linguistic.to(args.device), readability.to(args.device)], dim=1)
                 aes_pre = Smodel(fea_cat)
                 aes_pre = aes_pre.to('cpu')
-                aes_loss = nn.MSELoss()(aes_pre, score)
+                aes_loss = nn.MSELoss()(aes_pre.squeeze(), score.squeeze())
 
                 total_loss += aes_loss
                 score, aes_pre = TransferScoreForSingleTrait(score, aes_pre, prompt, mode, attribute_name)

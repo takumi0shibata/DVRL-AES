@@ -15,6 +15,8 @@ pred_models=("features_model")
 # lambda のリスト
 lambda_list=("0.0" "0.5" "1.0")
 
+batch_num=35
+
 # ループで各組み合わせを実行
 for pred_model in "${pred_models[@]}"
 do
@@ -23,7 +25,7 @@ do
     echo "Running with pred_model: ${pred_model}, lambda: ${lambda}"
     
     if [ "${lambda}" = "1.0" ]; then
-        python src/train_models/train_PAES_v5.py \
+        python src/train_models/train_PMAES_v5.py \
             --wandb \
             --pjname "DVRL-V5-20250206" \
             --target_prompt_id "${prompt}" \
@@ -31,16 +33,18 @@ do
             --device "${device}" \
             --pred_model "${pred_model}" \
             --loss_lambda "${lambda}" \
-            --dev_size 0
+            --dev_size 0 \
+            --batch_num "${batch_num}"
     else
-        python src/train_models/train_PAES_v5.py \
+        python src/train_models/train_PMAES_v5.py \
             --wandb \
             --pjname "DVRL-V5-20250206" \
             --target_prompt_id "${prompt}" \
             --seed 12 \
             --device "${device}" \
             --pred_model "${pred_model}" \
-            --loss_lambda "${lambda}"
+            --loss_lambda "${lambda}" \
+            --batch_num "${batch_num}"
     fi
   done
 done
