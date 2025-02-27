@@ -14,7 +14,7 @@ import os
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from models.PMAES import EssayEncoder, Scorer, PromptMappingCL
-from utils.pmaes_utils import PMAESDataSet, GetAllEssayRepresentations, TestSingleOverallScoring
+from utils.pmaes_utils import PMAESDataSet, GetAllEssayRepresentations, TestSingleOverallScoring, TrainSingleOverallScoring
 from utils.dvrl_utils import remove_top_p_sample
 from utils.general_utils import set_seed
 from dvrl.dataset import EssayDataset
@@ -35,65 +35,6 @@ def seed_all(seed_value):
         torch.backends.cudnn.deterministic = True  # needed
         torch.backends.cudnn.benchmark = False
 
-
-def train_epoch(args, essay_encoder, scorer, pm_cl, optimizer, tr_s_loader, te_t_loader, target_prompt_id, epoch):
-    print('Train other epoch: [TARGET] P:{} [EPOCH] E:{}...'.format(target_prompt_id, epoch))
-    if epoch == 1:
-        for item_index, s_item in tqdm(enumerate(tr_s_loader, start=1), desc='Training......'):
-            essay_encoder.train(True)
-            scorer.train(True)
-            optimizer.zero_grad()
-            s_prompt, s_pos_ids, s_ling, s_read, s_aes_label = s_item['prompt'], s_item['pos_ids'], s_item['ling'], \
-                                                               s_item['read'], s_item['score']
-
-            s_essay_fea = essay_encoder(s_pos_ids.to(args.device))
-            s_fea_cat = torch.cat([s_essay_fea, s_ling.to(args.device), s_read.to(args.device)], dim=1)
-            s_aes_pre = scorer(s_fea_cat)
-            s_aes_pre = s_aes_pre.to('cpu')
-            aes_loss = nn.MSELoss()(s_aes_pre.squeeze(), s_aes_label.squeeze())
-            aes_loss.backward(retain_graph=True)
-            optimizer.step()
-    else:
-        s_essay_embed = GetAllEssayRepresentations(args, essay_encoder, tr_s_loader)
-        t_essay_embed = GetAllEssayRepresentations(args, essay_encoder, te_t_loader)
-        for item_index, (s_item, t_item) in tqdm(enumerate(zip(tr_s_loader, te_t_loader), start=1), desc='Training......'):
-            essay_encoder.train(True)
-            scorer.train(True)
-            pm_cl.train(True)
-            optimizer.zero_grad()
-
-            s_prompt, s_pos_ids, s_ling, s_read, s_aes_label = s_item['prompt'], s_item['pos_ids'], s_item['ling'], s_item['read'], s_item['score']
-            t_prompt, t_pos_ids, t_ling, t_read, t_aes_label = t_item['prompt'], t_item['pos_ids'], t_item['ling'], t_item['read'], t_item['score']
-
-            # Start First Step
-            s_essay_fea_1 = essay_encoder(s_pos_ids.to(args.device))
-            t_essay_fea_1 = essay_encoder(t_pos_ids.to(args.device))
-            cl_loss_1 = 0.5 * pm_cl(s_essay_fea_1, t_essay_fea_1, s_essay_embed.to(args.device), t_essay_embed.to(args.device))
-            first_loss = cl_loss_1
-            first_loss.backward(retain_graph=True)
-            optimizer.step()
-            # End First Step
-
-            s_essay_fea_2 = essay_encoder(s_pos_ids.to(args.device))
-            t_essay_fea_2 = essay_encoder(t_pos_ids.to(args.device))
-            s_fea_cat_2 = torch.cat([s_essay_fea_2, s_ling.to(args.device), s_read.to(args.device)], dim=1)
-            s_aes_pre_2 = scorer(s_fea_cat_2)
-            s_aes_pre_2 = s_aes_pre_2.to('cpu')
-            aes_loss_2 = nn.MSELoss()(s_aes_pre_2.squeeze(), s_aes_label.squeeze())
-
-            cl_loss_2 = 0.5 * pm_cl(s_essay_fea_2, t_essay_fea_2, s_essay_embed.to(args.device), t_essay_embed.to(args.device))
-            second_loss = aes_loss_2 + cl_loss_2
-            second_loss.backward(retain_graph=True)
-            optimizer.step()
-
-            s_essay_fea_3 = essay_encoder(s_pos_ids.to(args.device))
-            s_fea_cat_3 = torch.cat([s_essay_fea_3, s_ling.to(args.device), s_read.to(args.device)], dim=1)
-            s_aes_pre_3 = scorer(s_fea_cat_3)
-            s_aes_pre_3 = s_aes_pre_3.to('cpu')
-            aes_loss_3 = nn.MSELoss()(s_aes_pre_3.squeeze(), s_aes_label.squeeze())
-            third_loss = aes_loss_3
-            third_loss.backward(retain_graph=True)
-            optimizer.step()
 
 def train_and_evaluate(
     train_data,
@@ -171,34 +112,19 @@ def train_and_evaluate(
     optims = torch.optim.Adam([{'params': essay_encoder.parameters()}, {'params': scorer.parameters()}, {'params': pm_cl.parameters()}], lr=args.learning_rate)
 
     # Training loop
-    best_dev_qwk = -1
-    best_test_qwk = -1
-    best_loss = 1000
-    for e_index in range(1, args.num_epochs+1):
-        # Train
-        train_epoch(args, essay_encoder, scorer, pm_cl, optims, tr_s_loader, te_t_loader, target_prompt_id, e_index)
-        # Dev
-        if args.dev_size > 0:   
-            dev_qwk, dev_loss = TestSingleOverallScoring(args, essay_encoder, scorer, va_s_loader, 'valid', args.attribute_name)
-        else:
-            dev_qwk = 0
-            dev_loss = 0
-        # Pseudo
-        pseudo_qwk, pseudo_loss = TestSingleOverallScoring(args, essay_encoder, scorer, pd_t_loader, 'valid', args.attribute_name)
-        # Test
-        test_qwk, test_loss = TestSingleOverallScoring(args, essay_encoder, scorer, te_t_loader, 'test', args.attribute_name)
-        print('Dev QWK: {:.4f} Dev Loss: {:.4f} Pseudo QWK: {:.4f} Pseudo Loss: {:.4f} Test QWK: {:.4f} Test Loss: {:.4f}'.format(dev_qwk, dev_loss, pseudo_qwk, pseudo_loss, test_qwk, test_loss))
+    tr_log = {
+        'Epoch_best_dev_qwk': [0, 0, 0],
+        'Best_dev_qwk': [0, 0],
+    }
+    epochs = 50
+    for e_index in range(1, epochs+1):
+        TrainSingleOverallScoring(args,
+                                  essay_encoder, scorer, pm_cl, optims,
+                                  tr_s_loader, va_s_loader, te_t_loader,
+                                  args.target_prompt_id, e_index,
+                                  tr_log, args.attribute_name)
 
-
-        model_selection_loss = (1 - args.loss_lambda) * dev_loss + args.loss_lambda * pseudo_loss
-        model_selection_qwk = (1 - args.loss_lambda) * dev_qwk + args.loss_lambda * pseudo_qwk
-    
-        if model_selection_qwk > best_dev_qwk:
-            best_loss = model_selection_loss
-            best_dev_qwk = model_selection_qwk
-            best_test_qwk = test_qwk
-
-    return best_test_qwk, best_loss
+    return None, None
 
 def main(args):
     ###################################################
@@ -239,8 +165,8 @@ def main(args):
     # load pseudo label
     df = pl.read_csv('data/pseudo_label.csv').to_dict()
     pseudo_dict = dict(zip(df['essay_id'].to_numpy(), df['y_pred'].to_numpy()))
-    estimated_data_value = np.load(f'outputs/{args.pjname}/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}.npy')
-    # estimated_data_value = np.load(f'/Users/takumishibata/Documents/project/DVRL-AES/outputs/dvrl_v5/values_1_mlp_seed12_dev30_lambda1.0_otFalse.npy')
+    # estimated_data_value = np.load(f'outputs/{args.pjname}/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}.npy')
+    estimated_data_value = np.load(f'/Users/takumishibata/Documents/project/DVRL-AES/outputs/dvrl_v5/values_1_mlp_seed12_dev30_lambda1.0_otFalse.npy')
 
 
     for p in np.arange(0.0, 1.0, 0.1):
