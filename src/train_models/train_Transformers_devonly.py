@@ -109,7 +109,7 @@ def main(args):
         logging_steps=10, # Log every 10 steps
         eval_strategy="epoch",     # Evaluate at the end of each epoch
         save_strategy="epoch",
-        load_best_model_at_end=True, # Load the best model found during training at the end
+        load_best_model_at_end=False, # Load the best model found during training at the end
         metric_for_best_model="eval_qwk", # Use Mean Squared Error to determine the best model
         greater_is_better=True, # Lower MSE is better
         report_to="none", # Disable external reporting integrations like WandB/TensorBoard for simplicity
