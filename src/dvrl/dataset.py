@@ -312,7 +312,7 @@ class EssayDataset:
         target_data = self.main_data.filter(pl.col('essay_set') == target_prompt_set)
         
         # Load BERT tokenizer and model
-        tokenizer = AutoTokenizer.from_pretrained(embedding_model)
+        tokenizer = AutoTokenizer.from_pretrained(embedding_model, use_fast=False)
         model = AutoModel.from_pretrained(embedding_model).to(device)
     
         # Function to compute embeddings and cache them

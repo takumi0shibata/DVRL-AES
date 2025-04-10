@@ -10,11 +10,12 @@ read -p "Enter the target prompt ID: " prompt
 device="cuda:$((prompt))"
 
 # pred_model のリスト
-# pred_models=("mlp" "features_model")
-pred_models=("features_model")
+pred_models=("mlp" "features_model")
+# pred_models=("features_model")
 
 # loss_lambda のリスト
-lambda_list=("1.0" "0.5" "0.0")
+# lambda_list=("1.0" "0.5" "0.0")
+lambda_list=("-1")
 
 # ループで各組み合わせを実行
 for pred_model in "${pred_models[@]}"

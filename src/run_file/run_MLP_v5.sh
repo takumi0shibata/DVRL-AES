@@ -7,14 +7,16 @@ cd ~/notebook/DVRL-AES/
 read -p "Enter the target prompt ID: " prompt
 
 # deviceをcuda:{prompt}に設定
-device="cuda:$((prompt))"
+# device="cuda:$((prompt))"
+device="cpu"
 
 # pred_model のリスト
 pred_models=("mlp" "features_model")
 # pred_models=("features_model")
 
 # lambda のリスト
-lambda_list=("0.0" "0.5" "1.0")
+# lambda_list=("0.0" "0.5" "1.0")
+lambda_list=("-1")
 
 # ループで各組み合わせを実行
 for pred_model in "${pred_models[@]}"
@@ -32,8 +34,7 @@ do
             --device "${device}" \
             --pred_model "${pred_model}" \
             --loss_lambda "${lambda}" \
-            --dev_size 0 \
-            --ot
+            --dev_size 0
     else
         python src/train_models/train_MLP_v5.py \
             --wandb \
@@ -42,8 +43,7 @@ do
             --seed 12 \
             --device "${device}" \
             --pred_model "${pred_model}" \
-            --loss_lambda "${lambda}" \
-            --ot
+            --loss_lambda "${lambda}"
     fi
   done
 done

@@ -80,6 +80,12 @@ def main(args):
         dvrl_data['x_dev'] = dev_data['ridley_feature']
         dvrl_data['x_pseudo'] = test_data['ridley_feature']
 
+    if args.loss_lambda == -1:
+        loss_lambda = len(test_data["essay_id"]) / (len(dev_data["essay_id"]) + len(test_data["essay_id"]))
+    else:
+        loss_lambda = args.loss_lambda
+    print(f'    Loss lambda: {loss_lambda}')
+
     # Network parameters
     print('Initialize DVRL framework...')
     dvrl_params = {
@@ -92,7 +98,7 @@ def main(args):
         'batch_size': 10000,
         'inner_iterations': 100,
         'batch_size_predictor': 512,
-        'loss_lambda': args.loss_lambda,
+        'loss_lambda': loss_lambda,
         'wandb': args.wandb,
         'ot': args.ot,
     }

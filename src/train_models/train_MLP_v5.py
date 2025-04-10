@@ -41,6 +41,11 @@ def train_and_evaluate(
     attribute_name,
     args,
 ):
+    if args.loss_lambda == -1:
+        loss_lambda = len(test_data["essay_id"]) / (len(dev_data["essay_id"]) + len(test_data["essay_id"]))
+    else:
+        loss_lambda = args.loss_lambda
+    print(f'    Loss lambda: {loss_lambda}')
     
     weights = (torch.tensor(weights, dtype=torch.float) == 1)
 
@@ -94,7 +99,7 @@ def train_and_evaluate(
     )
     pseudo_loss = mean_squared_error(mlp_data['y_pseudo'], y_pred_test)
     
-    model_selection_loss = (1 - args.loss_lambda) * dev_loss + args.loss_lambda * pseudo_loss
+    model_selection_loss = (1 - loss_lambda) * dev_loss + loss_lambda * pseudo_loss
     
     test_qwk = calc_qwk(mlp_data['y_test'], y_pred_test, target_prompt_id, attribute_name)
     return test_qwk, model_selection_loss
