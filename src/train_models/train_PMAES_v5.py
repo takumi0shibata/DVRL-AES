@@ -141,7 +141,15 @@ def train_and_evaluate(
         'score': test_data['scaled_score'],
     }
 
-    tr_s_num, tr_t_num = len(source['prompt_id']), len(target['prompt_id'])
+    target_for_cl = {
+        'prompt_id': np.concatenate([test_data['essay_set'], dev_data['essay_set']], axis=0),
+        'essay': np.concatenate([test_data['pos_x'], dev_data['pos_x']], axis=0),
+        'linguistic': np.concatenate([test_data['feature'], dev_data['feature']], axis=0),
+        'readability': np.concatenate([test_data['readability'], dev_data['readability']], axis=0),
+        'score': np.concatenate([test_data['scaled_score'], dev_data['scaled_score']], axis=0),
+    }
+
+    tr_s_num, tr_t_num = len(source['prompt_id']), len(target_for_cl['prompt_id'])
     batch_num = args.batch_num
     s_batch_size = int(tr_s_num / batch_num)
     t_batch_size = int(tr_t_num / batch_num)
@@ -158,7 +166,8 @@ def train_and_evaluate(
         va_s_loader = DataLoader(PMAESDataSet(**dev), batch_size=s_batch_size, shuffle=True)
     pd_t_loader = DataLoader(PMAESDataSet(**pseudo), batch_size=s_batch_size, shuffle=True)
     te_t_loader = DataLoader(PMAESDataSet(**target), batch_size=t_batch_size, shuffle=True)
-
+    te_t_loader_for_cl = DataLoader(PMAESDataSet(**target_for_cl), batch_size=t_batch_size, shuffle=True)
+    
     essay_encoder = EssayEncoder(
         args,
         max_num=train_data['max_sentnum'],
@@ -176,15 +185,15 @@ def train_and_evaluate(
     best_loss = 1000
     for e_index in range(1, args.num_epochs+1):
         # Train
-        train_epoch(args, essay_encoder, scorer, pm_cl, optims, tr_s_loader, te_t_loader, target_prompt_id, e_index)
+        train_epoch(args, essay_encoder, scorer, pm_cl, optims, tr_s_loader, te_t_loader_for_cl, target_prompt_id, e_index)
         # Dev
         if args.dev_size > 0:   
-            dev_qwk, dev_loss = TestSingleOverallScoring(args, essay_encoder, scorer, va_s_loader, 'valid', args.attribute_name)
+            dev_qwk, dev_loss = TestSingleOverallScoring(args, essay_encoder, scorer, va_s_loader, 'test', args.attribute_name)
         else:
             dev_qwk = 0
             dev_loss = 0
         # Pseudo
-        pseudo_qwk, pseudo_loss = TestSingleOverallScoring(args, essay_encoder, scorer, pd_t_loader, 'valid', args.attribute_name)
+        pseudo_qwk, pseudo_loss = TestSingleOverallScoring(args, essay_encoder, scorer, pd_t_loader, 'test', args.attribute_name)
         # Test
         test_qwk, test_loss = TestSingleOverallScoring(args, essay_encoder, scorer, te_t_loader, 'test', args.attribute_name)
         print('Dev QWK: {:.4f} Dev Loss: {:.4f} Pseudo QWK: {:.4f} Pseudo Loss: {:.4f} Test QWK: {:.4f} Test Loss: {:.4f}'.format(dev_qwk, dev_loss, pseudo_qwk, pseudo_loss, test_qwk, test_loss))
@@ -239,8 +248,8 @@ def main(args):
     # load pseudo label
     df = pl.read_csv('data/pseudo_label.csv').to_dict()
     pseudo_dict = dict(zip(df['essay_id'].to_numpy(), df['y_pred'].to_numpy()))
-    estimated_data_value = np.load(f'outputs/{args.pjname}/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}.npy')
-    # estimated_data_value = np.load(f'/Users/takumishibata/Documents/project/DVRL-AES/outputs/dvrl_v5/values_1_mlp_seed12_dev30_lambda1.0_otFalse.npy')
+    #estimated_data_value = np.load(f'outputs/{args.pjname}/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}.npy')
+    estimated_data_value = np.load(f'outputs/DVRL-V5-20250206/values_1_mlp_seed12_dev30_lambda-1.0_otFalse.npy')
 
 
     for p in np.arange(0.0, 1.0, 0.1):

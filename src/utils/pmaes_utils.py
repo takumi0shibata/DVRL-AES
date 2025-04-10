@@ -219,9 +219,9 @@ def get_min_max_scores():
             'sentence_fluency': (2, 12), 'conventions': (2, 12)}}
 
 def TransferScoreForSingleTrait(label, predict, prompt, mode, trait):
-    label = label.squeeze(-1).detach().numpy()
-    predict = predict.squeeze(-1).detach().numpy()
-    prompt = prompt.detach().numpy()
+    label = np.atleast_1d(label.squeeze(-1).detach().numpy())
+    predict = np.atleast_1d(predict.squeeze(-1).detach().numpy())
+    prompt = np.atleast_1d(prompt.detach().numpy())
     transfer_label = []
     transfer_predict = []
     max_min_scores = get_min_max_scores()
