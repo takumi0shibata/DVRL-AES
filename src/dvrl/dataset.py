@@ -19,7 +19,7 @@ class EssayDataset:
     MAX_SENTNUM = 100
 
     def __init__(self, main_file, feature_file, readability_file):
-        self.main_data = pl.read_excel(main_file)
+        self.main_data = pl.read_excel(main_file, infer_schema_length=20000)
         self.feature_data = pl.read_csv(feature_file)
         self.readability_data = pl.read_csv(readability_file)
 

@@ -133,12 +133,17 @@ def train_and_evaluate(
         'score': np.array([pseudo_dict[eid] for eid in test_data['essay_id']]),
     }
 
+    ###############
+    # テストデータの分布を変えたい場合，普通に実験する場合はコメントアウト
+    test_data_id_if_dev_200 = np.load(f'data/ex_data/test_data_id_if_dev_200_{target_prompt_id}.npy')
+    mask = np.isin(test_data['essay_id'], test_data_id_if_dev_200)
+    ###############
     target = {
-        'prompt_id': test_data['essay_set'],
-        'essay': test_data['pos_x'],
-        'linguistic': test_data['feature'],
-        'readability': test_data['readability'],
-        'score': test_data['scaled_score'],
+        'prompt_id': test_data['essay_set'][mask],
+        'essay': test_data['pos_x'][mask],
+        'linguistic': test_data['feature'][mask],
+        'readability': test_data['readability'][mask],
+        'score': test_data['scaled_score'][mask],
     }
 
     target_for_cl = {

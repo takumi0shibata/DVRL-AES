@@ -1,6 +1,7 @@
 src/.embedding_cache/
 .venv/
 wandb/
+.log/
 outputs/
 !outputs/DVRL-V5-20250206
 !outputs/DVRL-V5-20250206/*.npy
