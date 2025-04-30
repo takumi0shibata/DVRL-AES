@@ -358,16 +358,14 @@ class EssayDataset:
         target_ids = target_data['essay_id'].to_list()
         target_embeddings_array = np.vstack([target_embeddings_dict[essay_id] for essay_id in target_ids])
         
-        # Function to select diverse samples for the dev set
-        def select_diverse_samples(embeddings, n_samples, method='kmeans'):
+        def select_diverse_samples(embeddings, n_samples, method='euclidean'):
             if n_samples == 0:
                 return []
-                
+
             if method == 'cosine':
                 selected_indices = []
                 remaining_indices = list(range(len(embeddings)))
 
-                # Select the first sample randomly
                 first_index = np.random.choice(remaining_indices)
                 selected_indices.append(first_index)
                 remaining_indices.remove(first_index)
@@ -380,8 +378,8 @@ class EssayDataset:
                     remaining_indices.remove(next_index)
 
                 return selected_indices
+
             elif method == 'kmeans':
-                # Use k-means clustering to select diverse samples
                 n_clusters = min(n_samples, len(embeddings))
                 kmeans = KMeans(n_clusters=n_clusters, random_state=42)
                 kmeans.fit(embeddings)
@@ -390,19 +388,17 @@ class EssayDataset:
 
                 selected_indices = []
                 for i in range(n_clusters):
-                    # Find the sample closest to the centroid in each cluster
                     cluster_indices = np.where(cluster_labels == i)[0]
                     distances = cosine_distances([centroids[i]], embeddings[cluster_indices])
                     closest_index = cluster_indices[np.argmin(distances)]
                     selected_indices.append(closest_index)
 
                 return selected_indices
+
             elif method == 'euclidean':
-                # Use Euclidean distance to select diverse samples
                 selected_indices = []
                 remaining_indices = list(range(len(embeddings)))
 
-                # Select the first sample randomly
                 first_index = np.random.choice(remaining_indices)
                 selected_indices.append(first_index)
                 remaining_indices.remove(first_index)
@@ -415,8 +411,12 @@ class EssayDataset:
                     remaining_indices.remove(next_index)
 
                 return selected_indices
+
+            elif method == 'random':
+                return list(np.random.choice(len(embeddings), size=n_samples, replace=False))
+
             else:
-                raise ValueError("Invalid selection_method. Choose 'cosine' or 'kmeans'.")
+                raise ValueError("Invalid selection method. Choose 'cosine', 'kmeans', 'euclidean', or 'random'.")
 
         # Select indices for the dev set
         dev_indices = select_diverse_samples(target_embeddings_array, dev_size, selection_method)
