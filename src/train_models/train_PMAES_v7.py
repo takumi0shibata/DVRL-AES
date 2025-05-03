@@ -192,7 +192,7 @@ def train_and_evaluate(
     best_loss = 1000
     for e_index in range(1, args.num_epochs+1):
         # Train
-        train_epoch(args, essay_encoder, scorer, pm_cl, optims, tr_s_loader, te_t_loader_for_cl, target_prompt_id, e_index)
+        train_epoch(args, essay_encoder, scorer, pm_cl, optims, tr_s_loader, te_t_loader_for_cl, args.target_prompt_id, e_index)
         # Dev
         if args.loss_lambda != 1.0:   
             dev_qwk, dev_loss = TestSingleOverallScoring(args, essay_encoder, scorer, va_s_loader, 'test', args.attribute_name)
