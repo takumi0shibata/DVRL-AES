@@ -247,7 +247,7 @@ def main(args):
     dataset = EssayDataset('data/training_set_rel3.xlsx', 'data/hand_crafted_v3.csv', 'data/readability_features.csv')
     source_data, target_data = dataset.cross_prompt_split(
         target_prompt_set=args.target_prompt_id,
-        add_pos=False,
+        add_pos=True,
     )
     print(f'    Number of source samples: {len(source_data["essay_id"])}')
     print(f'    Number of target samples: {len(target_data["essay_id"])}')
