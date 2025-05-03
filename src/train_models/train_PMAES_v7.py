@@ -16,7 +16,8 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from models.PMAES import EssayEncoder, Scorer, PromptMappingCL
 from utils.pmaes_utils import PMAESDataSet, GetAllEssayRepresentations, TestSingleOverallScoring
-from utils.dvrl_utils import remove_top_p_sample
+from utils.dvrl_utils import select_non_top_essay_ids_by_percent
+from dvrl.sampling import select_diverse_subset
 from utils.general_utils import set_seed
 from dvrl.dataset import EssayDataset
 
