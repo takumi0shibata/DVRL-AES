@@ -10,6 +10,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import wandb
 import polars as pl
 from tqdm import tqdm
+import pickle
 
 # my packages
 import os

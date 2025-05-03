@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import polars as pl
 from tqdm import tqdm
+import pickle
 
 # my packages
 import os
