@@ -8,6 +8,7 @@ import torch.nn as nn
 from sklearn.metrics import cohen_kappa_score
 from utils.general_utils import get_min_max_scores
 import matplotlib.pyplot as plt
+import polars as pl
 
 def fit_func(
         model: nn.Module,
@@ -147,6 +148,35 @@ def remove_top_p_sample(data_value: np.ndarray, top_p: float, ascending: bool =T
     for i in sorted_data_value:
         weights[i] = 0
     return weights
+
+def select_non_top_essay_ids_by_percent(data_value_df, percentage=0.1, ascending=False):
+    """
+    Select a set of essay_ids NOT in the top or bottom percentage based on data_value.
+
+    Parameters:
+        data_value_df (pl.DataFrame): DataFrame with 'essay_id' and 'data_value' columns.
+        percentage (float): Fraction (0 < percentage <= 1) of essays to exclude.
+        ascending (bool): If True, exclude lowest values; if False, exclude highest.
+
+    Returns:
+        set: Set of essay_ids NOT in the top/bottom specified percentage.
+    """
+    assert 0 <= percentage <= 1, "Percentage must be between 0 and 1."
+
+    # Sort by data_value
+    sorted_df = data_value_df.sort(by='data_value', descending=not ascending)
+
+    # Determine number of essays to exclude
+    top_n = int(len(sorted_df) * percentage)
+    excluded_essay_ids = set(sorted_df[:top_n]['essay_id'].to_numpy())
+
+    # All essay_ids in the dataframe
+    all_essay_ids = set(data_value_df['essay_id'].to_numpy())
+
+    # Get the remaining (non-top) essay_ids
+    non_top_essay_ids = all_essay_ids - excluded_essay_ids
+
+    return non_top_essay_ids
 
 def random_remove_sample(data_value: np.ndarray, remove_p: float):
     """

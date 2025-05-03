@@ -1,5 +1,5 @@
 """Training on DVRL
-PAESを利用して作成した擬似ラベルを報酬計算に利用する手法
+任意の自動採点モデルにより作成した擬似ラベルを報酬計算に利用する手法
 """
 
 import os
@@ -10,11 +10,13 @@ import torch
 import torch.nn as nn
 import wandb
 import polars as pl
+import pickle
 
-from dvrl import dvrl_v5
+from dvrl import dvrl_v6
 from utils.general_utils import set_seed
 from dvrl.dataset import EssayDataset
 from dvrl.predictor import MLP
+from dvrl.sampling import select_diverse_subset
 from models.features import FeaturesModel
 
 
@@ -29,55 +31,60 @@ def main(args):
     if args.wandb:
         wandb.init(
             project=args.pjname,
-            name=args.run_name + f'_{args.pred_model}_{target_prompt_id}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}',
+            name=args.run_name + f'_{args.pred_model}_{target_prompt_id}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_{args.sampling}',
             config=dict(args._get_kwargs())
         )
 
     ###################################################
     # Step1. Load Data
     ###################################################
+    # Load embedding
+    with open('./outputs/embedding/deberta-v3-large.pkl', 'rb') as f:
+        embedding_dict = pickle.load(f)
+
+    # load pseudo label
+    pseudo_df = pl.read_csv('./outputs/pseudo_labels/pseudo_label_by_features_model.csv')
+    pseudo_dict = dict(zip(pseudo_df['essay_id'].to_numpy(), pseudo_df['y_pred'].to_numpy()))
+    
     # Load essay data
     print('Loading essay data...')
     dataset = EssayDataset('data/training_set_rel3.xlsx', 'data/hand_crafted_v3.csv', 'data/readability_features.csv')
-    dataset.preprocess_dataframe()
-    train_data, dev_data, test_data = dataset.cross_prompt_split(
+    source_data, target_data = dataset.cross_prompt_split(
         target_prompt_set=args.target_prompt_id,
-        dev_size=args.dev_size,
-        cache_dir='src/.embedding_cache',
-        embedding_model=args.embedding_model,
         add_pos=False,
     )
-    print(f'    Number of training samples: {len(train_data["essay_id"])}')
-    print(f'    Number of dev samples: {len(dev_data["essay_id"])}')
-    print(f'    Number of test samples: {len(test_data["essay_id"])}')
-    print(f'    Selected Dev data: {dev_data["essay_id"]}')
-    print(f'    The score of selected Dev data: {dev_data["original_score"]}')
+    print(f'    Number of source samples: {len(source_data["essay_id"])}')
+    print(f'    Number of target samples: {len(target_data["essay_id"])}')
 
-    # load pseudo label
-    df = pl.read_csv('data/pseudo_label.csv').to_dict()
-    pseudo_dict = dict(zip(df['essay_id'].to_numpy(), df['y_pred'].to_numpy()))
+    # Select dev data
+    selected_dev_ids = select_diverse_subset(
+        {essay_id: embedding_dict[essay_id] for essay_id in target_data['essay_id'] if essay_id in embedding_dict},
+        args.dev_size,
+        method=args.sampling,
+        seed=args.seed
+    )
+    dev_mask = np.isin(target_data['essay_id'], selected_dev_ids)
+
     ###################################################
     # Step2. Training DVRL
     ###################################################
     # Create predictor
     print('Creating predictor model...')
     dvrl_data = {}
-    dvrl_data['y_source'] = train_data['scaled_score']
-    dvrl_data['y_dev'] = dev_data['scaled_score']
-    dvrl_data['y_pseudo'] = np.array([pseudo_dict[eid] for eid in test_data['essay_id']])
+    dvrl_data['y_source'] = source_data['scaled_score']
+    dvrl_data['y_dev'] = target_data['scaled_score'][dev_mask]
+    dvrl_data['y_pseudo'] = np.array([pseudo_dict[eid] for eid in target_data['essay_id'][~dev_mask]])
     if args.pred_model == 'mlp':
-        pred_model = MLP(input_feature=train_data['embedding'].shape[1]).to(device)
-        dvrl_data['x_source'] = train_data['embedding']
-        dvrl_data['x_dev'] = dev_data['embedding']
-        dvrl_data['x_pseudo'] = test_data['embedding']
+        pred_model = MLP(input_feature=embedding_dict[1].shape[0]).to(device)
+        dvrl_data['x_source'] = np.array([embedding_dict[eid] for eid in source_data['essay_id']])
+        dvrl_data['x_dev'] = np.array([embedding_dict[eid] for eid in target_data['essay_id'][dev_mask]])
+        dvrl_data['x_pseudo'] = np.array([embedding_dict[eid] for eid in target_data['essay_id'][~dev_mask]])
     elif args.pred_model == 'features_model':
         pred_model = FeaturesModel().to(device)
-        train_data['ridley_feature'] = np.concatenate([train_data['feature'], train_data['readability']], axis=1)
-        dev_data['ridley_feature'] = np.concatenate([dev_data['feature'], dev_data['readability']], axis=1)
-        test_data['ridley_feature'] = np.concatenate([test_data['feature'], test_data['readability']], axis=1)
-        dvrl_data['x_source'] = train_data['ridley_feature']
-        dvrl_data['x_dev'] = dev_data['ridley_feature']
-        dvrl_data['x_pseudo'] = test_data['ridley_feature']
+        dvrl_data['x_source'] = source_data['ridley_feature']
+        dvrl_data['x_dev'] = target_data['ridley_feature'][dev_mask]
+        dvrl_data['x_pseudo'] = target_data['ridley_feature'][~dev_mask]
+    
 
     # Network parameters
     print('Initialize DVRL framework...')
@@ -93,11 +100,10 @@ def main(args):
         'batch_size_predictor': 512,
         'loss_lambda': args.loss_lambda,
         'wandb': args.wandb,
-        'ot': args.ot,
     }
 
     # Initialize DVRL
-    dvrl_class = dvrl_v5.Dvrl(
+    dvrl_class = dvrl_v6.Dvrl(
         dvrl_data,
         pred_model,
         dvrl_params,
@@ -109,14 +115,11 @@ def main(args):
     print('Training DVRL...')
     data_value = dvrl_class.train_dvrl(args.metric)
 
-    # # Estimate data value
-    # print('Estimating data value...')
-    # data_value = dvrl_class.dvrl_valuator(dvrl_data['x_source'], dvrl_data['y_source'])
-
     print('Saving DVRL...')
-    output_dir = './outputs/dvrl_v5'
+    output_dir = f'./outputs/{args.pjname}'
     os.makedirs(output_dir, exist_ok=True)
-    np.save(output_dir + f'/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_ot{args.ot}.npy', data_value)
+    filename = f'/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_{args.sampling}.csv'
+    pl.DataFrame({'essay_id': source_data['essay_id'], 'data_value': data_value}).write_csv(output_dir + filename)
 
     if args.wandb:
         wandb.alert(title=args.pjname, text='Training finished!')
@@ -127,7 +130,7 @@ if __name__ == '__main__':
     # Set up the argument parser
     parser = argparse.ArgumentParser(description="DVRL")
     parser.add_argument('--wandb', action='store_true')
-    parser.add_argument('--pjname', type=str, default='DVRL-V5')
+    parser.add_argument('--pjname', type=str, default='DVRL-V7')
     parser.add_argument('--run_name', type=str, default='Valuation')
     parser.add_argument('--target_prompt_id', type=int, default=1)
     parser.add_argument('--seed', type=int, default=12)
@@ -137,8 +140,8 @@ if __name__ == '__main__':
     parser.add_argument('--embedding_model', type=str, default='microsoft/deberta-v3-large')
     parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--pred_model',type=str, default='mlp', choices=['mlp', 'features_model'])
-    parser.add_argument('--loss_lambda', type=float, default=1.0)
-    parser.add_argument('--ot', action='store_true')
+    parser.add_argument('--loss_lambda', type=float, default=0.0)
+    parser.add_argument('--sampling', type=str, default='random', choices=['random', 'greedy', 'maxmin', 'kmeans++'])
     args = parser.parse_args()
     print(dict(args._get_kwargs()))
 

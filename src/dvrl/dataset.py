@@ -1,15 +1,8 @@
-import os
 import re
 import polars as pl
 from sklearn.model_selection import train_test_split
-from transformers import AutoTokenizer, AutoModel
-import torch
-from sklearn.metrics.pairwise import cosine_distances
 import numpy as np
-from tqdm import tqdm
-import pickle
 import nltk
-from sklearn.cluster import KMeans
 
 class EssayDataset:
     url_replacer = '<url>'
@@ -34,6 +27,8 @@ class EssayDataset:
             7: {'min': 0, 'max': 30},
             8: {'min': 0, 'max': 60},
         }
+
+        self._preprocess_dataframe()
 
     def replace_url(self, text):
         replaced_text = re.sub(r'(http[s]?://)?((www)\.)?([a-zA-Z0-9]+)\.{1}((com)(\.(cn))?|(org))', self.url_replacer, text)
@@ -209,21 +204,22 @@ class EssayDataset:
             X[i, num:, :] = 0
         return X
 
-    def preprocess_dataframe(self):
+    def _scale_score(self, score, essay_set):
+        min_score = self.score_ranges[essay_set]['min']
+        max_score = self.score_ranges[essay_set]['max']
+        return (score - min_score) / (max_score - min_score)
+    
+    def _preprocess_dataframe(self):
         ##############################
         # メインデータの前処理
         ##############################
         self.main_data = self.main_data.drop_nulls('domain1_score') # プロンプト4に得点がないデータが存在するので削除
         self.main_data = self.main_data.rename({'domain1_score': 'original_score'})
-        # スケーリング関数の定義
-        def scale_score(score, essay_set):
-            min_score = self.score_ranges[essay_set]['min']
-            max_score = self.score_ranges[essay_set]['max']
-            return (score - min_score) / (max_score - min_score)
+        
         # domain1_scoreのスケーリング
         self.main_data = self.main_data.with_columns(
             pl.struct(['original_score', 'essay_set'])
-            .map_elements(lambda x: scale_score(x['original_score'], x['essay_set']), return_dtype=pl.Float64)
+            .map_elements(lambda x: self._scale_score(x['original_score'], x['essay_set']), return_dtype=pl.Float64)
             .alias('scaled_score')
         )
         self.main_data = self.main_data.select(['essay_id', 'essay_set', 'essay', 'original_score', 'scaled_score'])
@@ -236,24 +232,19 @@ class EssayDataset:
 
         # essay_set単位でmin-maxスケーリングを適用し、最後に結合
         scaled_feature_data_list = []
-
         for essay_set in self.feature_data['essay_set'].unique():
             # 各essay_setごとにフィルタリング
             set_data = self.feature_data.filter(pl.col('essay_set') == essay_set)
-
             # 3列目以降に対してmin-maxスケーリングを適用
             for col in set_data.columns[2:]:  # essay_idとessay_set以外の列
                 min_val = set_data[col].min()
                 max_val = set_data[col].max()
-
                 # スケーリングを適用
                 set_data = set_data.with_columns(
                     ((pl.col(col) - min_val) / (max_val - min_val)).alias(col)
                 )
-
             # スケーリング済みのデータをリストに追加
             scaled_feature_data_list.append(set_data)
-
         # スケーリング済みデータを結合
         self.feature_data = pl.concat(scaled_feature_data_list)
         
@@ -296,158 +287,31 @@ class EssayDataset:
     
     def cross_prompt_split(
         self,
-        target_prompt_set,
-        dev_size=30,
-        cache_dir='.embedding_cache',
-        add_pos=False,
-        embedding_model='bert-base-uncased',
-        selection_method='euclidean',
-        device='cpu'
-    ):
-        # Create cache directory if it doesn't exist
-        os.makedirs(cache_dir, exist_ok=True)
+        target_prompt_set: int,
+        add_pos: bool = False,
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         
         # Filter data into source and target datasets
         source_data = self.main_data.filter(pl.col('essay_set') != target_prompt_set)
         target_data = self.main_data.filter(pl.col('essay_set') == target_prompt_set)
         
-        # Load BERT tokenizer and model
-        tokenizer = AutoTokenizer.from_pretrained(embedding_model, use_fast=False)
-        model = AutoModel.from_pretrained(embedding_model).to(device)
-    
-        # Function to compute embeddings and cache them
-        def compute_embeddings(df, cache_dir, tokenizer, model):
-            embeddings_dict = {}
-            uncached_essays = []
-            uncached_ids = []
-    
-            for essay_id, essay in zip(df['essay_id'], df['essay']):
-                cache_file = os.path.join(cache_dir, f'{essay_id}.pkl')
-                if os.path.exists(cache_file):
-                    with open(cache_file, 'rb') as f:
-                        embedding = pickle.load(f)
-                    embeddings_dict[essay_id] = embedding
-                else:
-                    uncached_essays.append(essay)
-                    uncached_ids.append(essay_id)
-    
-            # Compute embeddings for uncached essays
-            batch_size = 32
-            for i in tqdm(range(0, len(uncached_essays), batch_size)):
-                batch_essays = uncached_essays[i:i+batch_size]
-                inputs = tokenizer(batch_essays, return_tensors='pt', padding=True, truncation=True, max_length=512)
-                inputs = {k: v.to(device) for k, v in inputs.items()}  # Move inputs to GPU
-                with torch.no_grad():
-                    outputs = model(**inputs)
-                batch_embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()  # Move outputs to CPU before converting to numpy
-                
-                # Save embeddings to cache and assign to embeddings_dict
-                for essay_id, embedding in zip(uncached_ids[i:i+batch_size], batch_embeddings):
-                    embeddings_dict[essay_id] = embedding
-                    cache_file = os.path.join(cache_dir, f'{essay_id}.pkl')
-                    with open(cache_file, 'wb') as f:
-                        pickle.dump(embedding, f)
-    
-            return embeddings_dict
-        
-        # Compute embeddings for source and target datasets
-        source_embeddings_dict = compute_embeddings(source_data, cache_dir, tokenizer, model)
-        target_embeddings_dict = compute_embeddings(target_data, cache_dir, tokenizer, model)
-        all_embeddings_dict = source_embeddings_dict | target_embeddings_dict
-        
-        target_ids = target_data['essay_id'].to_list()
-        target_embeddings_array = np.vstack([target_embeddings_dict[essay_id] for essay_id in target_ids])
-        
-        def select_diverse_samples(embeddings, n_samples, method='euclidean'):
-            if n_samples == 0:
-                return []
-
-            if method == 'cosine':
-                selected_indices = []
-                remaining_indices = list(range(len(embeddings)))
-
-                first_index = np.random.choice(remaining_indices)
-                selected_indices.append(first_index)
-                remaining_indices.remove(first_index)
-
-                for _ in range(1, n_samples):
-                    distances = cosine_distances(embeddings[selected_indices], embeddings[remaining_indices])
-                    sum_distances = distances.sum(axis=0)
-                    next_index = remaining_indices[np.argmax(sum_distances)]
-                    selected_indices.append(next_index)
-                    remaining_indices.remove(next_index)
-
-                return selected_indices
-
-            elif method == 'kmeans':
-                n_clusters = min(n_samples, len(embeddings))
-                kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-                kmeans.fit(embeddings)
-                cluster_labels = kmeans.labels_
-                centroids = kmeans.cluster_centers_
-
-                selected_indices = []
-                for i in range(n_clusters):
-                    cluster_indices = np.where(cluster_labels == i)[0]
-                    distances = cosine_distances([centroids[i]], embeddings[cluster_indices])
-                    closest_index = cluster_indices[np.argmin(distances)]
-                    selected_indices.append(closest_index)
-
-                return selected_indices
-
-            elif method == 'euclidean':
-                selected_indices = []
-                remaining_indices = list(range(len(embeddings)))
-
-                first_index = np.random.choice(remaining_indices)
-                selected_indices.append(first_index)
-                remaining_indices.remove(first_index)
-
-                for _ in range(1, n_samples):
-                    distances = np.linalg.norm(embeddings[selected_indices, np.newaxis] - embeddings[remaining_indices], axis=2)
-                    sum_distances = distances.sum(axis=0)
-                    next_index = remaining_indices[np.argmax(sum_distances)]
-                    selected_indices.append(next_index)
-                    remaining_indices.remove(next_index)
-
-                return selected_indices
-
-            elif method == 'random':
-                return list(np.random.choice(len(embeddings), size=n_samples, replace=False))
-
-            else:
-                raise ValueError("Invalid selection method. Choose 'cosine', 'kmeans', 'euclidean', or 'random'.")
-
-        # Select indices for the dev set
-        dev_indices = select_diverse_samples(target_embeddings_array, dev_size, selection_method)
-        dev_indices = [int(i) for i in dev_indices]
-        # Get IDs and embeddings for dev and test sets
-        test_indices = [i for i in range(len(target_ids)) if i not in dev_indices]
-        
         # Function to extract data and include embeddings
-        def extract_data(df, embeddings_dict):
-            if len(df) == 0:  # Handle empty DataFrame case
-                return {
-                    'essay_id': np.array([]),
-                    'essay_set': np.array([]),
-                    'essay': np.array([]),
-                    'original_score': np.array([]),
-                    'scaled_score': np.array([]),
-                    'feature': np.array([]).reshape(0, self.feature_data.shape[1]-2),  # -2 for essay_id and essay_set columns
-                    'readability': np.array([]).reshape(0, self.readability_data.shape[1]-1),  # -1 for essay_id column
-                    'embedding': np.array([]).reshape(0, next(iter(embeddings_dict.values())).shape[0])  # Use first embedding's shape
-                }
+        def extract_data(df: pl.DataFrame):
             
             # Sort feature and readability DataFrames by essay_id
             df = df.sort('essay_id')
             feature = self.feature_data.filter(pl.col('essay_id').is_in(df['essay_id']))
             readability = self.readability_data.filter(pl.col('essay_id').is_in(df['essay_id']))
-            embeddings = np.vstack([embeddings_dict[essay_id] for essay_id in df['essay_id']])
-
+            
             # Assertions to ensure data integrity
-            assert len(df) == len(feature) == len(readability) == embeddings.shape[0], "Data lengths must match."
+            assert len(df) == len(feature) == len(readability), "Data lengths must match."
             assert df['essay_id'].to_list() == feature['essay_id'].to_list(), "Essay IDs must match."
             assert df['essay_id'].to_list() == readability['essay_id'].to_list(), "Essay IDs must match."
+
+            # Create Ridley's feature
+            feature = feature.drop(['essay_id', 'essay_set']).to_numpy()
+            readability = readability.drop(['essay_id']).to_numpy()
+            ridley_feature = np.concatenate([feature, readability], axis=1)
 
             return {
                 'essay_id': df['essay_id'].to_numpy(),
@@ -455,54 +319,44 @@ class EssayDataset:
                 'essay': df['essay'].to_numpy(),
                 'original_score': df['original_score'].to_numpy(),
                 'scaled_score': df['scaled_score'].to_numpy(),
-                'feature': feature.drop(['essay_id', 'essay_set']).to_numpy(),
-                'readability': readability.drop(['essay_id']).to_numpy(),
-                'embedding': embeddings,
+                'ridley_feature': ridley_feature,
+                'feature': feature,
+                'readability': readability,
             }
 
-        # Prepare DataFrames for train, dev, and test datasets
-        train_data_df = source_data
-        dev_data_df = target_data[dev_indices]
-        test_data_df = target_data[test_indices]
-
         # Extract data and include embeddings
-        train_data = extract_data(train_data_df, all_embeddings_dict)
-        dev_data = extract_data(dev_data_df, all_embeddings_dict)
-        test_data = extract_data(test_data_df, all_embeddings_dict)
+        source_data = extract_data(source_data)
+        target_data = extract_data(target_data)
 
         if add_pos:
             # create pos_x by Ridley style
-            pos_tags = self.read_pos_vocab(train_data['essay'])
-            train_pos_data = self.read_essay_sets(train_data['essay'], pos_tags)
+            pos_tags = self.read_pos_vocab(source_data['essay'])
+            source_pos_data = self.read_essay_sets(source_data['essay'], pos_tags)
             
             # Handle empty dev data case
-            if len(dev_data['essay']) > 0:
-                dev_pos_data = self.read_essay_sets(dev_data['essay'], pos_tags)
-                max_sentnum = max(train_pos_data['max_sentnum'], dev_pos_data['max_sentnum'])
-                max_sentlen = max(train_pos_data['max_sentlen'], dev_pos_data['max_sentlen'])
-            else:
-                dev_pos_data = {'pos_x': [], 'max_sentnum': 0, 'max_sentlen': 0}
-                max_sentnum = train_pos_data['max_sentnum']
-                max_sentlen = train_pos_data['max_sentlen']
-            
-            test_pos_data = self.read_essay_sets(test_data['essay'], pos_tags)
-            max_sentnum = max(max_sentnum, test_pos_data['max_sentnum'])
-            max_sentlen = max(max_sentlen, test_pos_data['max_sentlen'])
+            target_pos_data = self.read_essay_sets(target_data['essay'], pos_tags)
+            max_sentnum = max(source_pos_data['max_sentnum'], target_pos_data['max_sentnum'])
+            max_sentlen = max(source_pos_data['max_sentlen'], target_pos_data['max_sentlen'])
             
             # Pad the sequences with shape [batch, max_sentence_num, max_sentence_length]
-            X_train_pos = self.pad_hierarchical_text_sequences(train_pos_data['pos_x'], max_sentnum, max_sentlen)
-            train_data['pos_x'] = X_train_pos.reshape((X_train_pos.shape[0], X_train_pos.shape[1] * X_train_pos.shape[2]))
-            train_data['pos_vocab'] = pos_tags
-            train_data['max_sentnum'] = max_sentnum
-            train_data['max_sentlen'] = max_sentlen
+            X_source_pos = self.pad_hierarchical_text_sequences(source_pos_data['pos_x'], max_sentnum, max_sentlen)
+            source_data['pos_x'] = X_source_pos.reshape((X_source_pos.shape[0], X_source_pos.shape[1] * X_source_pos.shape[2]))
+            source_data['pos_vocab'] = pos_tags
+            source_data['max_sentnum'] = max_sentnum
+            source_data['max_sentlen'] = max_sentlen
             
-            if len(dev_data['essay']) > 0:
-                X_dev_pos = self.pad_hierarchical_text_sequences(dev_pos_data['pos_x'], max_sentnum, max_sentlen)
-                dev_data['pos_x'] = X_dev_pos.reshape((X_dev_pos.shape[0], X_dev_pos.shape[1] * X_dev_pos.shape[2]))
-            else:
-                dev_data['pos_x'] = np.array([]).reshape(0, max_sentnum * max_sentlen)
+            X_target_pos = self.pad_hierarchical_text_sequences(target_pos_data['pos_x'], max_sentnum, max_sentlen)
+            target_data['pos_x'] = X_target_pos.reshape((X_target_pos.shape[0], X_target_pos.shape[1] * X_target_pos.shape[2]))
             
-            X_test_pos = self.pad_hierarchical_text_sequences(test_pos_data['pos_x'], max_sentnum, max_sentlen)
-            test_data['pos_x'] = X_test_pos.reshape((X_test_pos.shape[0], X_test_pos.shape[1] * X_test_pos.shape[2]))
+        return source_data, target_data
 
-        return train_data, dev_data, test_data
+
+# TEST
+if __name__ == '__main__':
+    dataset = EssayDataset('data/training_set_rel3.xlsx', 'data/hand_crafted_v3.csv', 'data/readability_features.csv')
+    source_data, target_data = dataset.cross_prompt_split(
+        target_prompt_set=1,
+        add_pos=True
+    )
+    print(source_data['essay_id'].shape)
+    print(target_data['essay_id'].shape)

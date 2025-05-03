@@ -8,6 +8,7 @@ import torch.optim as optim
 import torch.nn as nn
 from sklearn import metrics
 import wandb
+from geomloss import SamplesLoss
 
 from dvrl.dvrl_loss import DvrlLoss
 from dvrl.data_value_estimator import DataValueEstimator
@@ -47,21 +48,21 @@ class Dvrl:
         self.y_source = dvrl_data['y_source'].reshape(-1, 1)
         self.x_dev = dvrl_data['x_dev']
         self.y_dev = dvrl_data['y_dev'].reshape(-1, 1)
+        self.x_target = dvrl_data['x_target']
         self.device = device
         self.target_prompt_id = target_prompt_id
 
         # Network parameters for data value estimator
-        self.hidden_dim = parameters.get('hidden_dim', 128)
-        self.comb_dim = parameters.get('comb_dim', 64)
-        self.outer_iterations = parameters.get('iterations', 1000)
-        self.activation_fn = parameters.get('activation', 'relu')
-        self.layer_number = parameters.get('layer_number', 2)
-        self.inner_iterations = parameters.get('inner_iterations', 100)
-        self.batch_size = int(min(parameters.get('batch_size', 32), self.x_source.shape[0]))
-        self.learning_rate = parameters.get('learning_rate', 1e-3)
-        self.batch_size_predictor = parameters.get('batch_size_predictor', 32)
-        self.moving_average = 'moving_average_window' in parameters
-        self.moving_average_window = parameters.get('moving_average_window', 100)
+        self.hidden_dim = parameters['hidden_dim']
+        self.comb_dim = parameters['comb_dim']
+        self.outer_iterations = parameters['iterations']
+        self.activation_fn = parameters['activation']
+        self.layer_number = parameters['layer_number']
+        self.inner_iterations = parameters['inner_iterations']
+        self.batch_size = int(min(parameters['batch_size'], self.x_source.shape[0]))
+        self.learning_rate = parameters['learning_rate']
+        self.batch_size_predictor = parameters['batch_size_predictor']
+        self.loss_lambda = parameters['loss_lambda']
 
         # Basic parameters
         self.epsilon = 1e-8  # Adds to the log to avoid overflow
@@ -84,7 +85,7 @@ class Dvrl:
 
         # Train baseline model
         self.ori_model = copy.deepcopy(self.pred_model)
-        self.ori_model.load_state_dict(torch.load(self.init_model_path))
+        self.ori_model.load_state_dict(torch.load(self.init_model_path, weights_only=True))
         logger.info('Training the original model...')
         fit_func(
             self.ori_model,
@@ -97,7 +98,7 @@ class Dvrl:
 
         # Train validation model
         self.val_model = copy.deepcopy(self.pred_model)
-        self.val_model.load_state_dict(torch.load(self.init_model_path))
+        self.val_model.load_state_dict(torch.load(self.init_model_path, weights_only=True))
         logger.info('Training the validation model...')
         fit_func(
             self.val_model,
@@ -115,18 +116,6 @@ class Dvrl:
         Args:
             metric (str): Metric to use for the DVRL ('mse', 'qwk', or 'corr').
         """
-        # Initialize the data value estimator network
-        self.value_estimator = DataValueEstimator(
-            input_dim=self.data_dim + self.label_dim,
-            hidden_dim=self.hidden_dim,
-            comb_dim=self.comb_dim,
-            layer_number=self.layer_number,
-            activation_fn=self.activation_fn
-        ).to(self.device)
-
-        dvrl_criterion = DvrlLoss(self.epsilon, self.threshold).to(self.device)
-        dvrl_optimizer = optim.Adam(self.value_estimator.parameters(), lr=self.learning_rate)
-
         # Compute baseline performance
         y_valid_hat = pred_func(
             self.ori_model,
@@ -154,7 +143,20 @@ class Dvrl:
         y_pred_diff = np.abs(self.y_source - y_source_valid_pred)
 
         # Initialize baseline for reward computation
-        baseline = 0 if self.moving_average else valid_perf
+        baseline = valid_perf
+
+        # Initialize the data value estimator network
+        self.value_estimator = DataValueEstimator(
+            input_dim=self.data_dim + self.label_dim,
+            hidden_dim=self.hidden_dim,
+            comb_dim=self.comb_dim,
+            y_pred_diff_dim=y_pred_diff.shape[1],
+            layer_number=self.layer_number,
+            activation_fn=self.activation_fn
+        ).to(self.device)
+
+        dvrl_criterion = DvrlLoss(self.epsilon, self.threshold).to(self.device)
+        dvrl_optimizer = optim.Adam(self.value_estimator.parameters(), lr=self.learning_rate)
 
         for iteration in tqdm(range(self.outer_iterations), desc='Training DVRL'):
             self.value_estimator.train()
@@ -178,7 +180,7 @@ class Dvrl:
 
             # Train a new model with the selected data
             new_model = copy.deepcopy(self.pred_model)
-            new_model.load_state_dict(torch.load(self.init_model_path))
+            new_model.load_state_dict(torch.load(self.init_model_path, weights_only=True))
             fit_func(
                 new_model,
                 x_batch,
@@ -200,32 +202,37 @@ class Dvrl:
             # Compute performance metric
             if metric == 'mse':
                 dvrl_perf = metrics.mean_squared_error(self.y_dev, y_valid_hat)
+                reward = baseline - dvrl_perf
             elif metric == 'qwk':
                 dvrl_perf = calc_qwk(self.y_dev, y_valid_hat, self.target_prompt_id, 'score')
+                reward = dvrl_perf - baseline
             elif metric == 'corr':
                 dvrl_perf = np.corrcoef(self.y_dev.flatten(), y_valid_hat.flatten())[0, 1]
+                reward = dvrl_perf - baseline
 
-            # Compute reward
-            reward = dvrl_perf - baseline
+            # Calculate wasserstein distance
+            sinkhorn = SamplesLoss("sinkhorn", p=2, blur=0.1)
+            # Compute distance
+            x_dev_tensor = torch.tensor(self.x_dev, dtype=torch.float32).to(self.device)
+            x_target_tensor = torch.tensor(self.x_target, dtype=torch.float32).to(self.device)
+            combined = torch.cat([x_dev_tensor, x_target_tensor], dim=0)
+            w_distance = sinkhorn(x_batch, combined).item()
 
             # Update the selection network
+            reward -= self.loss_lambda * w_distance
             reward_tensor = torch.tensor([reward], dtype=torch.float32).to(self.device)
             sel_prob_curr_tensor = torch.tensor(sel_prob_curr, dtype=torch.float32).to(self.device)
             loss = dvrl_criterion(est_dv_curr, sel_prob_curr_tensor, reward_tensor)
             loss.backward()
             dvrl_optimizer.step()
 
-            # Update the baseline
-            if self.moving_average:
-                baseline = (
-                    ((self.moving_average_window - 1) * baseline + dvrl_perf) / self.moving_average_window
+            if (iteration + 1) % 20 == 0:
+                logger.info(
+                    f'Iteration: {iteration + 1}, Reward: {reward:.3f}, DVRL Loss: {loss.item():.3f}, '
+                    f'Prob MAX: {est_dv_curr.max().item():.3f}, Prob MIN: {est_dv_curr.min().item():.3f}, '
+                    f'{metric.upper()} for Dev: {dvrl_perf:.3f}, '
+                    f'Wasserstein Distance: {w_distance:.3f}'
                 )
-
-            logger.info(
-                f'Iteration: {iteration + 1}, Reward: {reward:.3f}, DVRL Loss: {loss.item():.3f}, '
-                f'Prob MAX: {est_dv_curr.max().item():.3f}, Prob MIN: {est_dv_curr.min().item():.3f}, '
-                f'{metric.upper()}: {dvrl_perf:.3f}'
-            )
 
             if self.use_wandb:
                 wandb.log(
@@ -234,7 +241,7 @@ class Dvrl:
                         'DVRL Loss': loss.item(),
                         'Prob MAX': est_dv_curr.max().item(),
                         'Prob MIN': est_dv_curr.min().item(),
-                        metric.upper(): dvrl_perf
+                        'Wasserstein Distance': w_distance
                     }
                 )
 
@@ -243,7 +250,7 @@ class Dvrl:
         y_source_tensor = torch.tensor(self.y_source, dtype=torch.float32).to(self.device)
         y_pred_diff_tensor = torch.tensor(y_pred_diff, dtype=torch.float32).to(self.device)
         final_data_value = self.value_estimator(x_source_tensor, y_source_tensor, y_pred_diff_tensor).squeeze()
-        self.final_model.load_state_dict(torch.load(self.init_model_path))
+        self.final_model.load_state_dict(torch.load(self.init_model_path, weights_only=True))
         fit_func(
             self.final_model,
             self.x_source,
@@ -253,6 +260,8 @@ class Dvrl:
             self.device,
             final_data_value.detach().cpu().numpy()
         )
+        
+        return final_data_value.detach().cpu().numpy()
 
     def dvrl_valuator(self, x_source: np.ndarray, y_source: np.ndarray) -> np.ndarray:
         """
