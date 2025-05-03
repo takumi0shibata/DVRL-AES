@@ -177,10 +177,10 @@ def train_and_evaluate(
     
     essay_encoder = EssayEncoder(
         args,
-        max_num=source['max_sentnum'],
-        max_len=source['max_sentlen'],
+        max_num=source_data['max_sentnum'],
+        max_len=source_data['max_sentlen'],
         embed_dim=args.embedding_dim,
-        pos_vocab=source['pos_vocab']
+        pos_vocab=source_data['pos_vocab']
     ).to(args.device)
     scorer = Scorer(args).to(args.device)
     pm_cl = PromptMappingCL(args, tr_s_num, tr_t_num).to(args.device)
