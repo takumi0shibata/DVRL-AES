@@ -7,13 +7,16 @@ from sklearn.metrics import confusion_matrix
 
 
 class PMAESDataSet(Dataset):
-    def __init__(self, prompt_id, essay, linguistic, readability, score):
+    def __init__(self, prompt_id, essay, linguistic, readability, score, weight=None):
         super(PMAESDataSet, self).__init__()
         self.prompt_id = prompt_id
         self.essay = essay
         self.linguistic = linguistic
         self.readability = readability
         self.score = score
+        self.weight  = None if weight is None else torch.tensor(
+            weight, dtype=torch.float32
+        )
 
     def __len__(self):
         return len(self.score)
@@ -25,6 +28,7 @@ class PMAESDataSet(Dataset):
             'ling': torch.tensor(self.linguistic[item], dtype=torch.float),
             'read': torch.tensor(self.readability[item], dtype=torch.float),
             'score': torch.tensor(self.score[item], dtype=torch.float),
+            'weight': torch.tensor(np.ones(len(self.score)), dtype=torch.float)[item] if self.weight is None else self.weight[item],
         }
     
 
