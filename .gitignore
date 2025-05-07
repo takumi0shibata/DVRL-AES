@@ -48,6 +48,7 @@ MANIFEST
 .coverage
 htmlcov/
 .pytest_cache/
+*.log
 
 # その他
 .DS_Store
