@@ -127,8 +127,8 @@ def main(args):
         embedding_dict = pickle.load(f)
 
     # load pseudo label
-    pseudo_df = pl.read_csv('./outputs/pseudo_labels/pseudo_label_by_features_model.csv')
-    pseudo_dict = dict(zip(pseudo_df['essay_id'].to_numpy(), pseudo_df['y_pred'].to_numpy()))
+    pseudo_df = pl.read_csv(f'./outputs/pseudo_labels/PAES_pred_{target_prompt_id}_seed{args.seed}.csv')
+    pseudo_dict = dict(zip(pseudo_df['essay_id'].to_numpy(), pseudo_df['pred'].to_numpy()))
     
     # Load essay data
     print('Loading essay data...')

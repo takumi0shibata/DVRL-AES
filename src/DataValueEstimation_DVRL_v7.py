@@ -43,8 +43,8 @@ def main(args):
         embedding_dict = pickle.load(f)
 
     # load pseudo label
-    pseudo_df = pl.read_csv('./outputs/pseudo_labels/pseudo_label_by_features_model.csv')
-    pseudo_dict = dict(zip(pseudo_df['essay_id'].to_numpy(), pseudo_df['y_pred'].to_numpy()))
+    pseudo_df = pl.read_csv(f'./outputs/pseudo_labels/PAES_pred_{target_prompt_id}_seed{args.seed}.csv')
+    pseudo_dict = dict(zip(pseudo_df['essay_id'].to_numpy(), pseudo_df['pred'].to_numpy()))
     
     # Load essay data
     print('Loading essay data...')
@@ -138,7 +138,7 @@ if __name__ == '__main__':
     parser.add_argument('--dev_size', type=int, default=30)
     parser.add_argument('--metric', type=str, default='qwk', choices=['corr', 'mse', 'qwk'])
     parser.add_argument('--embedding_model', type=str, default='microsoft/deberta-v3-large')
-    parser.add_argument('--device', type=str, default='cpu')
+    parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--pred_model',type=str, default='mlp', choices=['mlp', 'features_model'])
     parser.add_argument('--loss_lambda', type=float, default=0.0)
     parser.add_argument('--sampling', type=str, default='random', choices=['random', 'greedy', 'maxmin', 'kmeans++'])
