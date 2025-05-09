@@ -19,6 +19,6 @@ do
           --device "${device}" \
           --pred_model "${pred_model}" \
           --sampling "random" \
-          --loss_lambda 0.5
+          --loss_lambda 1.0
   done
 done

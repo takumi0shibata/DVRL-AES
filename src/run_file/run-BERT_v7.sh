@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 device="cuda"
-seeds=("12" "22" "32")
+seeds=("42" "52")
 
 # ループで各組み合わせを実行
 for prompt in {1..8}
