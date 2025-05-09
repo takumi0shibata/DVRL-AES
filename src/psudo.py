@@ -98,7 +98,7 @@ def evaluate_epoch(model: nn.Module, data_loader, loss_fn, device):
         'qwk': qwk,
         'y_pred': all_preds,
     }
-for seed in [12, 32, 52]:
+for seed in [22, 42]:
     prompts = []
     qwks = []
     for prompt in range(1, 9):
