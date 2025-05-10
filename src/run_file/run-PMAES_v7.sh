@@ -18,7 +18,7 @@ pred_models=("features_model")
 lambda_list=("0.0")
 
 # seed のリスト
-seeds=("12" "32" "52")
+seeds=("22" "42")
 
 
 # ループで各組み合わせを実行
