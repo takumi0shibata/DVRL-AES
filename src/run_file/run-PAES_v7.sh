@@ -16,7 +16,7 @@ pred_models=("features_model")
 # lambda_list=("0.0" "0.5" "1.0")
 lambda_list=("1.0")
 
-seeds=("12 ""22" "32" "42" "52")
+seeds=("12" "32" "52")
 
 # ループで各組み合わせを実行
 for pred_model in "${pred_models[@]}"

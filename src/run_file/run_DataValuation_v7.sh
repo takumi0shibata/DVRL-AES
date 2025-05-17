@@ -10,7 +10,7 @@ pred_models=("features_model")
 
 lambdas=(0.5 1.0)
 
-for seed in 12 32 52
+for seed in 22 42
 do
   for pred_model in "${pred_models[@]}"
   do
