@@ -1,4 +1,6 @@
-"""Training on LOO"""
+"""Training on DVRL
+任意の自動採点モデルにより作成した擬似ラベルを報酬計算に利用する手法
+"""
 
 import os
 import torch
@@ -6,15 +8,12 @@ import numpy as np
 import argparse
 import torch
 import wandb
-from sklearn.metrics import mean_squared_error
-from tqdm import tqdm
+import pickle
 
-from transformers import AutoConfig
 from utils.general_utils import set_seed
-from utils.load_data import load_data_DVRL, load_data_PAES
-from dvrl.predictor import MLP
-from models.features import FeaturesModel
-from utils.dvrl_utils import fit_func, pred_func
+from dvrl.dataset import EssayDataset
+from dvrl.sampling import select_diverse_subset
+from data_valuation.core.loo_valuator import LOOValuator
 
 
 def main(args):
@@ -22,110 +21,78 @@ def main(args):
     # Step0. Set UP
     ###################################################
     target_prompt_id = args.target_prompt_id
-    batch_size = args.batch_size
-    epochs = args.epochs
     device = torch.device(args.device)
     set_seed(args.seed)
 
     ###################################################
-    # Step1. Create/Load Text Embedding
+    # Step1. Load Data
     ###################################################
-    print('Loading data...')
-    if args.input_seq == 'word':
-        dvrl_data = load_data_DVRL(
-            f'data/cross_prompt_attributes/{target_prompt_id}/',
-            args.attribute_name,
-            args.embedding_model,
-            device,
-            devsize=args.dev_size
-        )
-    elif args.input_seq == 'pos':
-        dvrl_data = load_data_PAES(
-            f'data/cross_prompt_attributes/{target_prompt_id}/',
-            args.attribute_name,
-            args.embedding_model,
-            device,
-            devsize=args.dev_size
-        )
-        dvrl_data['x_source'] = dvrl_data['x_source'][1]
-        dvrl_data['x_dev'] = dvrl_data['x_dev'][1]
+    # Load embedding
+    with open('./outputs/embedding/deberta-v3-large.pkl', 'rb') as f:
+        embedding_dict = pickle.load(f)
+    
+    # Load essay data
+    print('Loading essay data...')
+    dataset = EssayDataset('data/training_set_rel3.xlsx', 'data/hand_crafted_v3.csv', 'data/readability_features.csv')
+    source_data, target_data = dataset.cross_prompt_split(
+        target_prompt_set=args.target_prompt_id,
+        add_pos=False,
+    )
+    print(f'    Number of source samples: {len(source_data["essay_id"])}')
+    print(f'    Number of target samples: {len(target_data["essay_id"])}')
+
+    # Select dev data
+    selected_dev_ids = select_diverse_subset(
+        {essay_id: embedding_dict[essay_id] for essay_id in target_data['essay_id'] if essay_id in embedding_dict},
+        args.dev_size,
+        method=args.sampling,
+        seed=args.seed
+    )
+    dev_mask = np.isin(target_data['essay_id'], selected_dev_ids)
 
     ###################################################
-    # Step2. Training LOO
+    # Step2. Training DVRL
     ###################################################
-    if args.wandb:
-        wandb.init(
-            project=args.pjname,
-            name=args.experiment_name + f'_{target_prompt_id}_{args.input_seq}',
-            config=dict(args._get_kwargs())
-        )
-    
     # Create predictor
     print('Creating predictor model...')
-    if args.input_seq == 'word':
-        config = AutoConfig.from_pretrained(args.embedding_model)
-        pred_model = MLP(input_feature=config.hidden_size).to(device)
-    elif args.input_seq == 'pos':
-        pred_model = FeaturesModel().to(device)
-    torch.save(pred_model.state_dict(), f'tmp/init_model{target_prompt_id}.pth')
-
-    # Calculate the leave-one-out scores for source data
-    fit_func(
-        pred_model,
-        dvrl_data['x_source'],
-        dvrl_data['y_source'], 
-        batch_size,
-        epochs,
-        device
-    )
-    y_hat = pred_func(
-        pred_model,
-        dvrl_data['x_dev'],
-        batch_size,
-        device
-    )
-    baseline_loss = mean_squared_error(dvrl_data['y_dev'], y_hat)
-
-    # Calculate the leave-one-out scores for each sample in the source data
-    loo_scores = []
-    for i in tqdm(range(len(dvrl_data['x_source']))):
-        # Exclude the i-th sample from the source data
-        x_train_loo = np.delete(dvrl_data['x_source'], i, axis=0)
-        y_train_loo = np.delete(dvrl_data['y_source'], i, axis=0)
-        
-        # Train the model on the reduced dataset
-        if args.input_seq == 'word':
-            config = AutoConfig.from_pretrained(args.embedding_model)
-            loo_model = MLP(input_feature=config.hidden_size).to(device)
-        elif args.input_seq == 'pos':
-            loo_model = FeaturesModel().to(device)
-        loo_model.load_state_dict(torch.load(f'tmp/init_model{target_prompt_id}.pth'))
-        fit_func(
-            loo_model,
-            x_train_loo,
-            y_train_loo,
-            batch_size,
-            epochs,
-            device
-        )
-        y_hat = pred_func(
-            loo_model,
-            dvrl_data['x_dev'],
-            batch_size,
-            device
-        )
-        loo_loss = mean_squared_error(dvrl_data['y_dev'], y_hat)
-        
-        # Calculate the difference in MSE loss on the dev set
-        loo_score = loo_loss - baseline_loss
-        loo_scores.append(loo_score)
+    dvrl_data = {}
+    dvrl_data['y_source'] = source_data['scaled_score']
+    dvrl_data['y_dev'] = target_data['scaled_score'][dev_mask]
+    if args.pred_model == 'mlp':
+        dvrl_data['x_source'] = np.array([embedding_dict[eid] for eid in source_data['essay_id']])
+        dvrl_data['x_dev'] = np.array([embedding_dict[eid] for eid in target_data['essay_id'][dev_mask]])
+    elif args.pred_model == 'features_model':
+        dvrl_data['x_source'] = source_data['ridley_feature']
+        dvrl_data['x_dev'] = target_data['ridley_feature'][dev_mask]
     
-    # Save the leave-one-out scores
-    os.makedirs(f'outputs/Estimated_Data_Values/LOO-{args.input_seq}', exist_ok=True)
-    np.save(f'outputs/Estimated_Data_Values/LOO-{args.input_seq}/estimated_data_value{target_prompt_id}.npy', np.array(loo_scores))
-    print('Leave-One-Out scores saved.')
+
+    # Network parameters
+    print('Initialize loo framework...')
+    # LOO Valuation
+    valuator = LOOValuator(
+        prompt_id=target_prompt_id,
+        device=device,
+        seed=args.seed,
+        wandb_logging=args.wandb,
+        wandb_project=args.pjname,
+        wandb_name=args.run_name + f'_{args.pred_model}_{target_prompt_id}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_{args.sampling}',
+    )
+    estimated_values = valuator.estimate_values(
+        x_train=dvrl_data['x_source'],
+        y_train= dvrl_data['y_source'],
+        x_val= dvrl_data['x_dev'],
+        y_val= dvrl_data['y_dev'],
+        sample_ids=source_data['essay_id'],
+    )
+
+    print('Saving DVRL...')
+    output_dir = f'./outputs/{args.pjname}'
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f'values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_{args.sampling}.csv'
+    valuator.save_values(estimated_values, os.path.join(output_dir, filename))
 
     if args.wandb:
+        wandb.alert(title=args.pjname, text='Training finished!')
         wandb.finish()
 
 
@@ -133,18 +100,17 @@ if __name__ == '__main__':
     # Set up the argument parser
     parser = argparse.ArgumentParser(description="LOO")
     parser.add_argument('--wandb', action='store_true')
-    parser.add_argument('--pjname', type=str, default='LOO')
-    parser.add_argument('--experiment_name', type=str, default='LOO_DataValueEstimation')
+    parser.add_argument('--pjname', type=str, default='LOO-V7')
+    parser.add_argument('--run_name', type=str, default='Valuation')
     parser.add_argument('--target_prompt_id', type=int, default=1)
     parser.add_argument('--seed', type=int, default=12)
     parser.add_argument('--attribute_name', type=str, default='score')
     parser.add_argument('--dev_size', type=int, default=30)
-    parser.add_argument('--metric', type=str, default='qwk', choices=['corr', 'mse', 'qwk'])
     parser.add_argument('--embedding_model', type=str, default='microsoft/deberta-v3-large')
-    parser.add_argument('--device', type=str, default='cpu')
-    parser.add_argument('--input_seq', type=str, default='pos', choices=['word', 'pos'])
-    parser.add_argument('--batch_size', type=int, default=512)
-    parser.add_argument('--epochs', type=int, default=100)
+    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--pred_model',type=str, default='mlp', choices=['mlp', 'features_model'])
+    parser.add_argument('--loss_lambda', type=float, default=0.0)
+    parser.add_argument('--sampling', type=str, default='random', choices=['random', 'greedy', 'maxmin', 'kmeans++'])
     args = parser.parse_args()
     print(dict(args._get_kwargs()))
 

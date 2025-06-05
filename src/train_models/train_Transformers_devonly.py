@@ -7,6 +7,7 @@ import argparse
 import numpy as np
 import torch
 import json
+import pickle
 
 import polars as pl
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, Trainer, EvalPrediction
@@ -21,6 +22,7 @@ import os
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from dvrl.dataset import EssayDataset
+from dvrl.sampling import select_diverse_subset
 from utils.general_utils import set_seed, get_min_max_scores
 
 
@@ -30,29 +32,43 @@ def main(args):
     # Step0. Set UP
     ###################################################
     target_prompt_id = args.target_prompt_id
-    device = torch.device('cuda')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(12)
 
     ###################################################
     # Step1. Load Data
     ###################################################
+    # Load embedding
+    with open('./outputs/embedding/deberta-v3-large.pkl', 'rb') as f:
+        embedding_dict = pickle.load(f)
+
+    # load pseudo label
+    pseudo_df = pl.read_csv('./outputs/pseudo_labels/pseudo_label_by_features_model.csv')
+    pseudo_dict = dict(zip(pseudo_df['essay_id'].to_numpy(), pseudo_df['y_pred'].to_numpy()))
+    
     # Load essay data
     print('Loading essay data...')
     dataset = EssayDataset('data/training_set_rel3.xlsx', 'data/hand_crafted_v3.csv', 'data/readability_features.csv')
-    dataset.preprocess_dataframe()
-    train_data, dev_data, test_data = dataset.cross_prompt_split(
-        target_prompt_set=target_prompt_id,
-        dev_size=args.dev_size,
-        cache_dir='src/.embedding_cache',
-        embedding_model='microsoft/deberta-v3-large',
+    source_data, target_data = dataset.cross_prompt_split(
+        target_prompt_set=args.target_prompt_id,
         add_pos=False,
-        device=device
     )
-    print(f'    Number of training samples: {len(train_data["essay_id"])}')
-    print(f'    Number of dev samples: {len(dev_data["essay_id"])}')
-    print(f'    Number of test samples: {len(test_data["essay_id"])}')
-    print(f'    Selected Dev data: {dev_data["essay_id"]}')
-    print(f'    The score of selected Dev data: {dev_data["original_score"]}')
+    print(f'    Number of source samples: {len(source_data["essay_id"])}')
+    print(f'    Number of target samples: {len(target_data["essay_id"])}')
+
+    # Select dev data
+    selected_dev_ids = select_diverse_subset(
+        {essay_id: embedding_dict[essay_id] for essay_id in target_data['essay_id']},
+        args.dev_size,
+        method='random',
+        seed=12
+    )
+    dev_mask = np.isin(target_data['essay_id'], selected_dev_ids)
+
+    x_dev = target_data['essay'][dev_mask].tolist()
+    y_dev = target_data['scaled_score'][dev_mask].tolist()
+    x_test = target_data['essay'][~dev_mask].tolist()
+    y_test = target_data['scaled_score'][~dev_mask].tolist()
 
     # --- Configuration ---
     # Specify the pre-trained model name. Can be changed to "bert-base-uncased", "FacebookAI/roberta-base", "microsoft/deberta-v3-large", etc.
@@ -71,8 +87,8 @@ def main(args):
 
     # --- 4. Tokenize Data ---
     # Tokenize the texts using the loaded tokenizer
-    dev_encodings = tokenizer(dev_data['essay'].tolist(), truncation=True, padding="max_length", max_length=max_length)
-    test_encodings = tokenizer(test_data['essay'].tolist(), truncation=True, padding="max_length", max_length=max_length)
+    dev_encodings = tokenizer(x_dev, truncation=True, padding="max_length", max_length=max_length)
+    test_encodings = tokenizer(x_test, truncation=True, padding="max_length", max_length=max_length)
 
     # --- 5. Create Custom PyTorch Dataset ---
     class EssayDatasetTmp(TorchDataset):
@@ -92,8 +108,8 @@ def main(args):
             return len(self.labels)
 
     # Instantiate the custom dataset for training and evaluation sets
-    dev_dataset = EssayDatasetTmp(dev_encodings, dev_data['scaled_score'])
-    test_dataset = EssayDatasetTmp(test_encodings, test_data['scaled_score'])
+    dev_dataset = EssayDatasetTmp(dev_encodings, y_dev)
+    test_dataset = EssayDatasetTmp(test_encodings, y_test)
 
     # --- 6. Define Training Arguments ---
     # Configure the training process using TrainingArguments (remains the same)
@@ -107,7 +123,7 @@ def main(args):
         optim="adamw_torch", # Use the AdamW optimizer
         logging_strategy="steps",  # Log metrics at the end of each epoch
         logging_steps=10, # Log every 10 steps
-        eval_strategy="epoch",     # Evaluate at the end of each epoch
+        evaluation_strategy="epoch",     # Evaluate at the end of each epoch
         save_strategy="epoch",
         load_best_model_at_end=False, # Load the best model found during training at the end
         metric_for_best_model="eval_qwk", # Use Mean Squared Error to determine the best model
@@ -167,7 +183,7 @@ def main(args):
 
     # Save Metrics with json
     print("Saving metrics...")
-    with open(f"outputs/devonly_{target_prompt_id}_{args.dev_size}.json", "w") as metrics_file:
+    with open(f"outputs/dev_only/devonly_{target_prompt_id}_{args.dev_size}.json", "w") as metrics_file:
         json.dump(eval_results, metrics_file)
 
 

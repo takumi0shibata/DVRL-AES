@@ -1,0 +1,1 @@
+{"eval_loss": 0.004687104839831591, "eval_rmse": 0.06846243378548261, "eval_mae": 0.05396179109811783, "eval_qwk": 0.6875373256987483, "eval_lwk": 0.44825250703213004, "eval_corr": 0.7508645590472512, "eval_runtime": 0.5679, "eval_samples_per_second": 392.664, "eval_steps_per_second": 12.326, "epoch": 10.0}

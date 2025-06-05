@@ -1,79 +1,19 @@
+"""Training on DVRL
+任意の自動採点モデルにより作成した擬似ラベルを報酬計算に利用する手法
+"""
+
 import os
-import torch.nn as nn
 import torch
 import numpy as np
 import argparse
 import torch
 import wandb
-from collections import deque
+import pickle
 
 from utils.general_utils import set_seed
-from utils.load_data import load_data_DVRL, load_data_PAES
-from dvrl.predictor import MLP
-from models.features import FeaturesModel
-
-# Data Shapley 値計算関数
-def data_shapley(X_train, y_train, X_test, y_test,  input_seq, max_iter=5000, threshold=0.05):
-    n_samples = X_train.shape[0]
-    input_dim = X_train.shape[1]
-    shapley_values = np.zeros(n_samples)
-    past_shapley_values = deque(maxlen=100)
-    t = 0
-    while t < max_iter:
-        t += 1
-        permutation = np.random.permutation(n_samples)
-        if 'word' in input_seq:
-            model = MLP(input_dim)
-        elif 'pos' in input_seq:
-            model = FeaturesModel()
-        criterion = nn.MSELoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-        losses = []
-        
-        X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
-        y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
-        model.eval()
-        with torch.no_grad():
-            init_loss = criterion(model(X_test_tensor).squeeze(), y_test_tensor).item()
-        losses.append(init_loss)
-
-        for j in range(n_samples):
-            X_train_point = torch.tensor(X_train[permutation[j]].reshape(1, -1), dtype=torch.float32)
-            y_train_point = torch.tensor(y_train[permutation[j]].reshape(1, -1), dtype=torch.float32)
-
-            # Fit
-            model.train()
-            optimizer.zero_grad()
-            y_pred = model(X_train_point)
-            loss = criterion(y_train_point, y_pred)
-            loss.backward()
-            optimizer.step()
-
-            # Eval
-            model.eval()
-            with torch.no_grad():
-                y_pred = model(X_test_tensor)
-                loss = criterion(y_test_tensor, y_pred.squeeze()).item()
-
-            # Update Shapley value
-            shapley_values[permutation[j]] = (t - 1) / t * shapley_values[permutation[j]] + 1 / t * (loss - losses[-1])
-            losses.append(loss)
-
-        # Early stopping check (after the initial 100 iterations)
-        if t > 100:
-            # 100イテレーション前の Shapley 値を取得
-            past_shapley_value = past_shapley_values.popleft()
-            convergence_criteria = np.mean(np.abs(shapley_values - past_shapley_value) / np.abs(shapley_values))
-            print(f"Iteration {t}: {convergence_criteria}")
-            if convergence_criteria < threshold:
-                print(f"Early stopping at iteration {t}")
-                return shapley_values
-        else:
-            print(f"Iteration {t}")
-
-        past_shapley_values.append(shapley_values.copy())  # 現在の Shapley 値をキューに追加
-
-    return shapley_values
+from dvrl.dataset import EssayDataset
+from dvrl.sampling import select_diverse_subset
+from data_valuation.core.shapley_valuator import ShapleyValuator
 
 
 def main(args):
@@ -85,72 +25,92 @@ def main(args):
     set_seed(args.seed)
 
     ###################################################
-    # Step1. Create/Load Text Embedding
+    # Step1. Load Data
     ###################################################
-    print('Loading data...')
-    if args.input_seq == 'word':
-        dvrl_data = load_data_DVRL(
-            f'data/cross_prompt_attributes/{target_prompt_id}/',
-            args.attribute_name,
-            args.embedding_model,
-            device,
-            devsize=args.dev_size
-        )
-    elif args.input_seq == 'pos':
-        dvrl_data = load_data_PAES(
-            f'data/cross_prompt_attributes/{target_prompt_id}/',
-            args.attribute_name,
-            args.embedding_model,
-            device,
-            devsize=args.dev_size
-        )
-        dvrl_data['x_source'] = dvrl_data['x_source'][1]
-        dvrl_data['x_dev'] = dvrl_data['x_dev'][1]
-
-    ###################################################
-    # Step2. Training LOO
-    ###################################################
-    if args.wandb:
-        wandb.init(
-            project=args.pjname,
-            name=args.experiment_name + f'_{target_prompt_id}_{args.input_seq}',
-            config=dict(args._get_kwargs())
-        )
+    # Load embedding
+    with open('./outputs/embedding/deberta-v3-large.pkl', 'rb') as f:
+        embedding_dict = pickle.load(f)
     
-    ds_scores = data_shapley(
-        dvrl_data['x_source'],
-        dvrl_data['y_source'],
-        dvrl_data['x_dev'],
-        dvrl_data['y_dev'],
-        args.input_seq,
-        max_iter=5000,
-        threshold=0.05,
+    # Load essay data
+    print('Loading essay data...')
+    dataset = EssayDataset('data/training_set_rel3.xlsx', 'data/hand_crafted_v3.csv', 'data/readability_features.csv')
+    source_data, target_data = dataset.cross_prompt_split(
+        target_prompt_set=args.target_prompt_id,
+        add_pos=False,
     )
+    print(f'    Number of source samples: {len(source_data["essay_id"])}')
+    print(f'    Number of target samples: {len(target_data["essay_id"])}')
+
+    # Select dev data
+    selected_dev_ids = select_diverse_subset(
+        {essay_id: embedding_dict[essay_id] for essay_id in target_data['essay_id'] if essay_id in embedding_dict},
+        args.dev_size,
+        method=args.sampling,
+        seed=args.seed
+    )
+    dev_mask = np.isin(target_data['essay_id'], selected_dev_ids)
+
+    ###################################################
+    # Step2. Training DVRL
+    ###################################################
+    # Create predictor
+    print('Creating predictor model...')
+    dvrl_data = {}
+    dvrl_data['y_source'] = source_data['scaled_score']
+    dvrl_data['y_dev'] = target_data['scaled_score'][dev_mask]
+    if args.pred_model == 'mlp':
+        dvrl_data['x_source'] = np.array([embedding_dict[eid] for eid in source_data['essay_id']])
+        dvrl_data['x_dev'] = np.array([embedding_dict[eid] for eid in target_data['essay_id'][dev_mask]])
+    elif args.pred_model == 'features_model':
+        dvrl_data['x_source'] = source_data['ridley_feature']
+        dvrl_data['x_dev'] = target_data['ridley_feature'][dev_mask]
     
-    # Save the leave-one-out scores
-    os.makedirs(f'outputs/Estimated_Data_Values/DataShapley-{args.input_seq}', exist_ok=True)
-    np.save(f'outputs/Estimated_Data_Values/DataShapley-{args.input_seq}/estimated_data_value{target_prompt_id}.npy', np.array(ds_scores))
-    print('DataShapley scores saved.')
-    print(ds_scores)
+
+    # Network parameters
+    print('Initialize data Shapley framework...')
+    # Data Shapley Valuation
+    valuator = ShapleyValuator(
+        prompt_id=target_prompt_id,
+        device=device,
+        seed=args.seed,
+        wandb_logging=args.wandb,
+        wandb_project=args.pjname,
+        wandb_name=args.run_name + f'_{args.pred_model}_{target_prompt_id}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_{args.sampling}',
+    )
+    estimated_values = valuator.estimate_values(
+        x_train=dvrl_data['x_source'],
+        y_train= dvrl_data['y_source'],
+        x_val= dvrl_data['x_dev'],
+        y_val= dvrl_data['y_dev'],
+        sample_ids=source_data['essay_id'],
+    )
+
+    print('Saving DVRL...')
+    output_dir = f'./outputs/{args.pjname}'
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f'values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_{args.sampling}.csv'
+    valuator.save_values(estimated_values, os.path.join(output_dir, filename))
 
     if args.wandb:
+        wandb.alert(title=args.pjname, text='Training finished!')
         wandb.finish()
 
 
 if __name__ == '__main__':
     # Set up the argument parser
-    parser = argparse.ArgumentParser(description="Data Shapley")
+    parser = argparse.ArgumentParser(description="DS")
     parser.add_argument('--wandb', action='store_true')
-    parser.add_argument('--pjname', type=str, default='Data Shapley')
-    parser.add_argument('--experiment_name', type=str, default='DataShapley_DataValueEstimation')
+    parser.add_argument('--pjname', type=str, default='DS-V7')
+    parser.add_argument('--run_name', type=str, default='Valuation')
     parser.add_argument('--target_prompt_id', type=int, default=1)
     parser.add_argument('--seed', type=int, default=12)
     parser.add_argument('--attribute_name', type=str, default='score')
     parser.add_argument('--dev_size', type=int, default=30)
-    parser.add_argument('--metric', type=str, default='qwk', choices=['corr', 'mse', 'qwk'])
     parser.add_argument('--embedding_model', type=str, default='microsoft/deberta-v3-large')
-    parser.add_argument('--device', type=str, default='cpu')
-    parser.add_argument('--input_seq', type=str, default='word', choices=['word', 'pos'])
+    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--pred_model',type=str, default='mlp', choices=['mlp', 'features_model'])
+    parser.add_argument('--loss_lambda', type=float, default=0.0)
+    parser.add_argument('--sampling', type=str, default='random', choices=['random', 'greedy', 'maxmin', 'kmeans++'])
     args = parser.parse_args()
     print(dict(args._get_kwargs()))
 
