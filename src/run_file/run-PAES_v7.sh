@@ -21,7 +21,7 @@ lambda_list=("0.0")
 
 seeds=("12")
 
-dev_size_list=(10 20 40 50 100 200 500)
+dev_size_list=(30)
 
 # ループで各組み合わせを実行
 for pred_model in "${pred_models[@]}"
@@ -35,7 +35,7 @@ do
         echo "Running with pred_model: ${pred_model}, lambda: ${lambda}, seed: ${seed}, dev_size: ${dev_size}"
         python3 src/train_models/train_PAES_v7.py \
               --wandb \
-              --pjname "DVRL-V7-20250501" \
+              --pjname "DS-V7" \
               --target_prompt_id "${prompt}" \
               --seed "${seed}" \
               --device "${device}" \
