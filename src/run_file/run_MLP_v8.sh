@@ -2,14 +2,15 @@
 
 device="cuda"
 
-# pred_model="mlp"
+pred_model="mlp"
 # seeds=("12" "22" "32")
+seeds=("12" "42" "52")
 
-pred_model="features_model"
-seeds=("12" "32" "52")
+# pred_model="features_model"
+# seeds=("12" "32" "52")
 
 loss_lambda="0.0"
-# weights=("uniform" "original" "inverse")
+weights=("original" "inverse")
 
 # ループで各組み合わせを実行
 for seed in "${seeds[@]}"

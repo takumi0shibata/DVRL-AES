@@ -16,7 +16,7 @@ pred_models=("features_model")
 weights=("original" "inverse")
 
 # seed のリスト
-seeds=("12" "32" "52")
+seeds=("22" "42")
 
 
 # ループで各組み合わせを実行

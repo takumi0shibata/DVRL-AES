@@ -3,7 +3,8 @@
 device="cuda"
 
 pred_model="mlp"
-seeds=("12" "22" "32")
+# seeds=("12" "22" "32")
+seeds=("42" "52")
 
 model_name="bert-base-uncased"
 loss_lambda="0.0"

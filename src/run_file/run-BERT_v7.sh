@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 device="cuda"
-seeds=("42" "52")
+seeds=("12")
 
 # ループで各組み合わせを実行
 for prompt in {1..8}
@@ -11,7 +11,7 @@ do
     echo "Running with seed: ${seed}, prompt: ${prompt}"
     python3 src/train_models/train_Transformers_v7.py \
         --wandb \
-        --pjname "DVRL-V7-20250501" \
+        --pjname "DS-V7" \
         --target_prompt_id "${prompt}" \
         --seed "${seed}" \
         --device "${device}" \

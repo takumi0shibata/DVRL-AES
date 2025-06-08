@@ -18,7 +18,7 @@ pred_models=("features_model")
 lambda_list=("0.0")
 
 # seed のリスト
-seeds=("22" "42")
+seeds=("12")
 
 
 # ループで各組み合わせを実行
@@ -31,7 +31,7 @@ do
       echo "Running with pred_model: ${pred_model}, lambda: ${lambda}, seed: ${seed}"
       python src/train_models/train_PMAES_v7.py \
             --wandb \
-            --pjname "DVRL-V7-20250501" \
+            --pjname "DS-V7" \
             --target_prompt_id "${prompt}" \
             --seed "${seed}" \
             --device "${device}" \

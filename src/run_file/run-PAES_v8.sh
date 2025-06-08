@@ -5,8 +5,8 @@ device="cuda"
 # pred_model のリスト
 pred_model="features_model"
 loss_lambda="0.0"
-seeds=("32" "52")
-weights=("uniform" "original" "inverse")
+seeds=("22" "42")
+weights=("original" "inverse")
 
 # ループで各組み合わせを実行
 for seed in "${seeds[@]}"

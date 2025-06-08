@@ -3,7 +3,8 @@
 device="cuda"
 
 pred_model="mlp"
-seeds=("12" "22" "32")
+# seeds=("12" "22" "32")
+seeds=("42" "52")
 
 model_name="microsoft/deberta-v3-large"
 loss_lambda="0.0"
