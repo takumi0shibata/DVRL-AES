@@ -33,7 +33,7 @@ do
       for dev_size in "${dev_size_list[@]}"
       do
         echo "Running with pred_model: ${pred_model}, lambda: ${lambda}, seed: ${seed}, dev_size: ${dev_size}"
-        python3 src/train_models/train_LOO_v7.py \
+        python3 src/train_models/train_PAES_v7.py \
               --wandb \
               --pjname "LOO-V7" \
               --target_prompt_id "${prompt}" \
