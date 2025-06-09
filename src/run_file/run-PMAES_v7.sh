@@ -31,7 +31,7 @@ do
       echo "Running with pred_model: ${pred_model}, lambda: ${lambda}, seed: ${seed}"
       python src/train_models/train_PMAES_v7.py \
             --wandb \
-            --pjname "DS-V7" \
+            --pjname "LOO-V7" \
             --target_prompt_id "${prompt}" \
             --seed "${seed}" \
             --device "${device}" \

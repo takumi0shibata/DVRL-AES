@@ -11,7 +11,7 @@ do
     echo "Running with seed: ${seed}, prompt: ${prompt}"
     python3 src/train_models/train_Transformers_v7.py \
         --wandb \
-        --pjname "DS-V7" \
+        --pjname "LOO-V7" \
         --target_prompt_id "${prompt}" \
         --seed "${seed}" \
         --device "${device}" \
