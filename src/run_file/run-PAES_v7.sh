@@ -1,16 +1,16 @@
-#!/usr/bin/env bash
+# !/usr/bin/env bash
 
-# source ~/torch/bin/activate
-# cd ~/notebook/DVRL-AES/
+source ~/torch/bin/activate
+cd ~/notebook/DVRL-AES/
 
-# # Promptをコンソールから入力を受け付ける
-# read -p "Enter the target prompt ID: " prompt
+# Promptをコンソールから入力を受け付ける
+read -p "Enter the target prompt ID: " prompt
 
-# # deviceをcuda:{prompt}に設定
-# device="cuda:$((prompt))"
+# deviceをcuda:{prompt}に設定
+device="cuda:$((prompt))"
 
-prompt=$1  # コマンドライン引数から取得
-device="cuda"
+# prompt=$1  # コマンドライン引数から取得
+# device="cuda"
 
 # pred_model のリスト
 pred_models=("mlp")
