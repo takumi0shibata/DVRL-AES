@@ -13,7 +13,7 @@ device="cuda:$((prompt))"
 # device="cuda"
 
 # pred_model のリスト
-pred_models=("mlp")
+pred_models=("hybrid" "mlp")
 
 # lambda のリスト
 # lambda_list=("0.0" "0.5" "1.0")
