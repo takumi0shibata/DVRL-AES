@@ -6,11 +6,11 @@
 prompt=$1  # コマンドライン引数から取得
 device="cuda"
 
-pred_models=("features_model")
+pred_models=("hybrid")
 
 lambdas=(0.0)
 
-dev_size_list=(10 20 40 50 100 200 500)
+dev_size_list=(30)
 
 for seed in 12
 do

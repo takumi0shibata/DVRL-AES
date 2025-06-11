@@ -84,6 +84,19 @@ def main(args):
         dvrl_data['x_source'] = source_data['ridley_feature']
         dvrl_data['x_dev'] = target_data['ridley_feature'][dev_mask]
         dvrl_data['x_pseudo'] = target_data['ridley_feature'][~dev_mask]
+    elif args.pred_model == 'hybrid':
+        sem_source = np.array([embedding_dict[eid] for eid in source_data['essay_id']])
+        sem_dev = np.array([embedding_dict[eid] for eid in target_data['essay_id'][dev_mask]])
+        sem_pseudo = np.array([embedding_dict[eid] for eid in target_data['essay_id'][~dev_mask]])
+        ind_source = source_data['ridley_feature']
+        ind_dev = target_data['ridley_feature'][dev_mask]
+        ind_pseudo = target_data['ridley_feature'][~dev_mask]
+        dvrl_data['x_source'] = np.concatenate([sem_source, ind_source], axis=1)
+        dvrl_data['x_dev'] = np.concatenate([sem_dev, ind_dev], axis=1)
+        dvrl_data['x_pseudo'] = np.concatenate([sem_pseudo, ind_pseudo], axis=1)
+        pred_model = MLP(
+            input_feature=sem_source.shape[1] + ind_source.shape[1]
+        ).to(device)
     
 
     # Network parameters
@@ -139,7 +152,7 @@ if __name__ == '__main__':
     parser.add_argument('--metric', type=str, default='qwk', choices=['corr', 'mse', 'qwk'])
     parser.add_argument('--embedding_model', type=str, default='microsoft/deberta-v3-large')
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--pred_model',type=str, default='mlp', choices=['mlp', 'features_model'])
+    parser.add_argument('--pred_model',type=str, default='mlp', choices=['mlp', 'features_model', 'hybrid'])
     parser.add_argument('--loss_lambda', type=float, default=0.0)
     parser.add_argument('--sampling', type=str, default='random', choices=['random', 'greedy', 'maxmin', 'kmeans++'])
     args = parser.parse_args()

@@ -13,7 +13,7 @@ prompt=$1  # コマンドライン引数から取得
 device="cuda"
 
 # pred_model のリスト
-pred_models=("features_model")
+pred_models=("mlp")
 
 # lambda のリスト
 # lambda_list=("0.0" "0.5" "1.0")
@@ -35,7 +35,7 @@ do
         echo "Running with pred_model: ${pred_model}, lambda: ${lambda}, seed: ${seed}, dev_size: ${dev_size}"
         python3 src/train_models/train_PAES_v7.py \
               --wandb \
-              --pjname "LOO-V7" \
+              --pjname "DVRL-V7-20250501" \
               --target_prompt_id "${prompt}" \
               --seed "${seed}" \
               --device "${device}" \

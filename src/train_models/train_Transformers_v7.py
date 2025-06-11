@@ -293,7 +293,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=32, choices=[32, 8]) # BERT-base: 32, DeBERTa-v3-large: 16
     parser.add_argument('--epochs', type=int, default=5)
     parser.add_argument('--lr', type=float, default=2e-5)
-    parser.add_argument('--pred_model', type=str, default='mlp', choices=['mlp', 'features_model'])
+    parser.add_argument('--pred_model', type=str, default='mlp', choices=['mlp', 'features_model', 'hybrid'])
     parser.add_argument('--loss_lambda', type=float, default=0.0)
     parser.add_argument('--sampling', type=str, default='random', choices=['random', 'greedy', 'maxmin', 'kmeans++'])
     parser.add_argument(
