@@ -285,6 +285,12 @@ def main(args):
         device=device
     )
     print(f'Best Test QWK: {best_test_qwk:.4f}, Best Dev Loss: {best_dev_loss:.4f}, Best Dev QWK: {best_dev_qwk:.4f}')
+    if args.wandb:
+        wandb.log({
+            'best_test_qwk': best_test_qwk,
+            'best_dev_loss': best_dev_loss,
+            'best_dev_qwk': best_dev_qwk
+        })
 
     if args.wandb:
         wandb.finish()

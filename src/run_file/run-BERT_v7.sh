@@ -3,7 +3,7 @@
 device="cuda"
 seeds=("12")
 
-pred_model="features_model"  # モデル名を指定
+pred_model="hybrid"  # モデル名を指定
 
 # ループで各組み合わせを実行
 for prompt in {1..8}

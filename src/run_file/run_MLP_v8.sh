@@ -4,10 +4,10 @@ device="cuda"
 
 pred_model="mlp"
 # seeds=("12" "22" "32")
-seeds=("12" "42" "52")
+seeds=("42" "52")
 
 # pred_model="features_model"
-# seeds=("12" "32" "52")
+# seeds=("22" "42")
 
 loss_lambda="0.0"
 weights=("original" "inverse")
