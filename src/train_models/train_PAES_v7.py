@@ -275,7 +275,8 @@ def main(args):
     print(f'    Number of target samples: {len(target_data["essay_id"])}')
 
     # Load Estimated Data Value
-    data_value_df = pl.read_csv(f'outputs/{args.pjname}/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_{args.sampling}.csv')
+    # data_value_df = pl.read_csv(f'outputs/{args.pjname}/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_{args.sampling}.csv')
+    data_value_df = pl.read_csv(f'outputs/DVRL-V7-20250501/values_{target_prompt_id}_{args.pred_model}_seed{args.seed}_dev{args.dev_size}_lambda{args.loss_lambda}_{args.sampling}.csv')
 
     # Select dev data
     selected_dev_ids = select_diverse_subset(

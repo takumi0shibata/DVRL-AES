@@ -1,3 +1,4 @@
+import time 
 import torch
 import numpy as np
 import torch
@@ -11,6 +12,8 @@ from utils.general_utils import set_seed
 from dvrl.dataset import EssayDataset
 from models.paes import PAES
 from utils.general_utils import set_seed, get_min_max_scores
+
+start_time = time.time()
 
 def train_epoch(model, train_loader, loss_fn, optimizer, device):
     model.train()
@@ -98,7 +101,7 @@ def evaluate_epoch(model: nn.Module, data_loader, loss_fn, device):
         'qwk': qwk,
         'y_pred': all_preds,
     }
-for seed in [22, 42]:
+for seed in [12]:
     prompts = []
     qwks = []
     for prompt in range(1, 9):
@@ -213,6 +216,10 @@ for seed in [22, 42]:
 
         final_history = evaluate_epoch(model, test_loader, loss_fn, device)
         y_pred = final_history['y_pred']
-        pl.DataFrame({'essay_id': target_data['essay_id'], 'pred': y_pred}).write_csv(f'outputs/pseudo_labels/PAES_pred_{prompt}_seed{seed}.csv')
+    #     pl.DataFrame({'essay_id': target_data['essay_id'], 'pred': y_pred}).write_csv(f'outputs/pseudo_labels/PAES_pred_{prompt}_seed{seed}.csv')
         
-    pl.DataFrame({'prompt': prompts, 'qwk': qwks}).write_csv(f'outputs/pseudo_labels/PAES_performance_seed{seed}.csv')
+    # pl.DataFrame({'prompt': prompts, 'qwk': qwks}).write_csv(f'outputs/pseudo_labels/PAES_performance_seed{seed}.csv')
+
+end_time = time.time()
+print(f'Total time: {end_time - start_time} seconds')
+print(f'Average time: {(end_time - start_time)/8} seconds')
